@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://sducournau.github.io/IGN_LIDAR_HD_DATASET/)
 
-**Version 4.0.1** | [📚 Full Documentation](https://sducournau.github.io/IGN_LIDAR_HD_DATASET/) | [📖 Documentation Index](DOCUMENTATION.md) | [⚙️ Configuration v4.0 Guide](docs/docs/configuration-guide-v4.md) | [🔄 Migration Guide](docs/docs/migration-guide-v4.md)
+**Version 4.0.2** | [📚 Full Documentation](https://sducournau.github.io/IGN_LIDAR_HD_DATASET/) | [📖 Documentation Index](DOCUMENTATION.md) | [⚙️ Configuration v4.0 Guide](docs/docs/configuration-guide-v4.md) | [🔄 Migration Guide](docs/docs/migration-guide-v4.md)
 
 ![LoD3 Building Model](https://github.com/sducournau/IGN_LIDAR_HD_DATASET/blob/main/docs/static/img/lod3.png?raw=true)
 
@@ -42,7 +42,7 @@ A comprehensive Python library for processing French IGN LiDAR HD data into mach
 
 ## 🚀 Performance Highlights
 
-**Version 4.0.1** continues the exceptional performance delivered through advanced GPU optimization:
+**Version 4.0.2** continues the exceptional performance delivered through advanced GPU optimization:
 
 | Metric                       | Baseline | Optimized | Speedup     |
 | ---------------------------- | -------- | --------- | ----------- |

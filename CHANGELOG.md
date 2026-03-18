@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.0.2] - 2026-03-18 - Metadata & Version Sync 📦
+
+**Date**: March 18, 2026  
+**Focus**: Version synchronization across all project metadata
+
+### Changed 🔧
+
+- Synchronized version to 4.0.2 across all project files (pyproject.toml, __init__.py, README, conda recipe, docs)
+- Ensured consistent version references throughout the project
+
+---
+
 ## [4.0.1] - 2026-03-18 - CI/CD & PyPI Automation 🚀
 
 **Date**: March 18, 2026  
