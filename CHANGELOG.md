@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.0.1] - 2026-03-18 - CI/CD & PyPI Automation 🚀
+
+**Date**: March 18, 2026  
+**Focus**: Automated PyPI publishing via GitHub Actions
+
+### Added ✨
+
+- **GitHub Actions PyPI Workflow**: Automated package publishing on release via trusted publisher (OIDC)
+  - Build job with `python -m build` and `twine check` validation
+  - Publish job using `pypa/gh-action-pypi-publish` with OIDC authentication
+  - No API tokens needed — uses PyPI Trusted Publisher
+- **CI/CD Pipeline**: New `.github/workflows/publish-pypi.yml` workflow
+
+### Changed 🔧
+
+- Version bump to 4.0.1
+- Updated conda recipe to 4.0.1
+- Updated documentation metadata to 4.0.1
+
+---
+
 ## [4.0.0] - 2025-12-02 - Configuration v4.0 Harmonization 🎯
 
 **Date**: November 29, 2025  

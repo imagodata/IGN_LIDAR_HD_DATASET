@@ -1,5 +1,5 @@
 {% set name = "ign-lidar-hd" %}
-{% set version = "3.6.2" %}
+{% set version = "4.0.1" %}
 
 package:
   name: {{ name|lower }}
