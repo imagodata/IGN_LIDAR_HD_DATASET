@@ -134,3 +134,4 @@ docs/node_modules/
 docs/.docusaurus/
 docs/build/
 docs/.mypy_cache/
+CLAUDE.md
