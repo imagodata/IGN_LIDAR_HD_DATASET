@@ -94,7 +94,7 @@ class ProcessorConfig:
 
     lod_level: Literal["LOD2", "LOD3"] = "LOD2"
     architecture: Literal[
-        "pointnet++", "hybrid", "octree", "transformer", "sparse_conv", "multi"
+        "pointnet++", "hybrid", "octree", "transformer", "sparse_conv", "multi", "ptv3"
     ] = "pointnet++"
     use_gpu: bool = False
     num_workers: int = 4

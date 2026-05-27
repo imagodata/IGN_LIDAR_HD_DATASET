@@ -348,6 +348,99 @@ LOD3_TO_ASPRS: Dict[int, int] = {v: k for k, v in ASPRS_TO_LOD3.items()}
 
 
 # ============================================================================
+# Lidar HD 7-Class Contiguous Schema (for Pointcept / PTv3 training)
+# ============================================================================
+# Pointcept-family models (PTv3, PT-v2, SparseConv) require labels in a
+# contiguous [0, K-1] range, with an ignore_index for masked points.
+# This schema follows the canonical IGN Lidar HD 7-class semseg taxonomy.
+
+LIDARHD_7CL_NAMES: List[str] = [
+    "ground",            # 0
+    "vegetation_low",    # 1
+    "vegetation_medium", # 2
+    "vegetation_high",   # 3
+    "building",          # 4
+    "water",             # 5
+    "bridge",            # 6
+]
+
+LIDARHD_7CL_IGNORE_INDEX: int = -1
+
+# Maps every known ASPRS / extended code to the contiguous 7-class index,
+# or to LIDARHD_7CL_IGNORE_INDEX for noise / unclassified / unsupported codes.
+ASPRS_TO_LIDARHD_7CL: Dict[int, int] = {
+    # --- Ignored ---
+    0: LIDARHD_7CL_IGNORE_INDEX,   # Never classified
+    1: LIDARHD_7CL_IGNORE_INDEX,   # Unclassified
+    7: LIDARHD_7CL_IGNORE_INDEX,   # Low point (noise)
+    8: LIDARHD_7CL_IGNORE_INDEX,   # Reserved
+    18: LIDARHD_7CL_IGNORE_INDEX,  # High noise
+    20: LIDARHD_7CL_IGNORE_INDEX,  # Ignored ground
+    22: LIDARHD_7CL_IGNORE_INDEX,  # Temporal exclusion
+    # --- Ground (0) ---
+    2: 0,
+    11: 0,  # Road surface treated as ground
+    # --- Vegetation (1, 2, 3) ---
+    3: 1,
+    4: 2,
+    5: 3,
+    # --- Building (4) ---
+    6: 4,
+    # --- Water (5) ---
+    9: 5,
+    # --- Bridge (6) ---
+    17: 6,
+}
+# Extended ASPRS codes — all building variants → building class 4
+for _code in range(50, 70):
+    ASPRS_TO_LIDARHD_7CL[_code] = 4
+# Extended vegetation codes (70-79) → mostly veg high, low for bushes/grass/hedge
+ASPRS_TO_LIDARHD_7CL.update({
+    70: 3,  # Tree
+    71: 1,  # Bush
+    72: 1,  # Grass
+    73: 1,  # Hedge
+    74: 3,  # Forest
+    75: 2,  # Vineyard
+    76: 3,  # Orchard
+})
+# Extended water codes (80-85)
+for _code in range(80, 86):
+    ASPRS_TO_LIDARHD_7CL[_code] = 5
+
+# Inverse: contiguous index -> representative ASPRS code (for export / debug)
+LIDARHD_7CL_TO_ASPRS: Dict[int, int] = {
+    0: 2,   # Ground
+    1: 3,   # Low veg
+    2: 4,   # Medium veg
+    3: 5,   # High veg
+    4: 6,   # Building
+    5: 9,   # Water
+    6: 17,  # Bridge
+}
+
+
+def remap_asprs_to_lidarhd_7cl(labels):
+    """Vectorized ASPRS -> contiguous Lidar HD 7-class remap.
+
+    Unknown codes default to LIDARHD_7CL_IGNORE_INDEX.
+
+    Args:
+        labels: 1-D integer array of ASPRS codes.
+
+    Returns:
+        np.ndarray (int16) of contiguous labels in [0..6] or ignore_index.
+    """
+    import numpy as np
+    labels = np.asarray(labels)
+    out = np.full(labels.shape, LIDARHD_7CL_IGNORE_INDEX, dtype=np.int16)
+    # Build a flat lookup over the observed range; bounded copy avoids a big LUT.
+    for asprs_code, contiguous_id in ASPRS_TO_LIDARHD_7CL.items():
+        out[labels == asprs_code] = contiguous_id
+    return out
+
+
+# ============================================================================
 # BD TOPO® Nature Attribute Mappings
 # ============================================================================
 
@@ -857,6 +950,12 @@ __all__ = [
     "VEGETATION_FEATURES",
     "BUILDING_FEATURES",
     "ALL_CLASSIFICATION_FEATURES",
+    # Lidar HD 7cl contiguous (Pointcept / PTv3)
+    "LIDARHD_7CL_NAMES",
+    "LIDARHD_7CL_IGNORE_INDEX",
+    "ASPRS_TO_LIDARHD_7CL",
+    "LIDARHD_7CL_TO_ASPRS",
+    "remap_asprs_to_lidarhd_7cl",
     # Backward compatibility
     "LOD2_CLASSES",
     "LOD3_CLASSES",

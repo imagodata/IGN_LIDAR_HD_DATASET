@@ -1,0 +1,92 @@
+# ============================================================================
+# IGN LiDAR HD - Preset: PTv3 Aerial (Pointcept-ready training set)
+# ============================================================================
+# Inherits: base.yaml
+#
+# USE CASE: Export patches as a Pointcept-compatible dataset for fine-tuning
+#           Point Transformer V3 (PTv3) on aerial LiDAR HD data.
+#
+# OUTPUT LAYOUT:
+#   <output_root>/
+#     meta.json
+#     train/<patch_id>/{coord,feat,segment}.npy
+#     val/<patch_id>/{coord,feat,segment}.npy
+#     test/<patch_id>/{coord,feat,segment}.npy
+#
+# KEY DESIGN CHOICES:
+#   - No voxelisation: PTv3 voxelises at train time (Pointcept GridSample,
+#     recommended grid_size=0.15m for aerial).
+#   - Labels remapped to contiguous [0..6] with -1 ignore_index — required by
+#     Pointcept's CrossEntropy / Lovasz losses.
+#   - Splits assigned BY TILE, not by patch, to avoid spatial leakage.
+# ============================================================================
+
+defaults:
+  - ../base
+  - _self_
+
+config_version: "5.1.0"
+preset_name: "ptv3_aerial"
+
+# Processor: target PTv3 / Pointcept training pipeline
+processor:
+  lod_level: "LOD2"
+  processing_mode: "enriched_and_patches"
+  architecture: "ptv3"
+  use_gpu: true
+  num_workers: 4
+  patch_overlap: 0.0          # no overlap — PTv3 sees voxelised scenes anyway
+  patch_size: 150.0
+  num_points: -1              # disabled: PTv3 does not require fixed N
+  augment: false              # all augmentation lives in Pointcept transforms
+  num_augmentations: 0
+
+# Features required for the default PTv3 feat stack
+features:
+  mode: "lod2"
+  compute_normals: true       # required (default feat_keys includes 'normals')
+  compute_curvature: false
+  compute_height: true
+  compute_geometric: false
+  compute_architectural: false
+  use_rgb: false
+  use_infrared: false
+  compute_ndvi: false         # set true if you want NDVI in feat_keys
+
+# Output: PTv3 / Pointcept layout
+output:
+  format: "ptv3_pointcept"
+  save_enriched: false
+  save_patches: true
+  save_metadata: true
+  save_stats: true
+
+  ptv3:
+    layout: "folder"          # "folder" or "pth"
+    feat_keys: ["intensity", "return_number", "normals"]
+    label_schema: "lidar_hd_7cl_contiguous"
+    center_xy: true
+    anchor_z_min: true
+
+    split:
+      strategy: "by_tile"     # by_tile | by_patch  (by_tile prevents leakage)
+      train: 0.8
+      val: 0.1
+      test: 0.1
+      seed: 42
+
+# Data sources: ground-truth refinement before export
+data_sources:
+  bd_topo:
+    enabled: true
+    features:
+      buildings: true
+      roads: true
+      water: true
+      vegetation: false
+
+preprocess:
+  enabled: false
+
+stitching:
+  enabled: false

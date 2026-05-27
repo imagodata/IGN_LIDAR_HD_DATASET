@@ -16,6 +16,10 @@ from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
 
+# Sentinel format name routed to the PTv3 / Pointcept dataset writer
+# instead of the standard NPZ/HDF5/LAZ/PT serializers.
+PTV3_FORMAT = "ptv3_pointcept"
+
 
 class OutputWriter:
     """
@@ -66,6 +70,11 @@ class OutputWriter:
         # Parse output formats
         self.formats_list = [fmt.strip() for fmt in self.output_format.split(",")]
 
+        # PTv3 / Pointcept writer is set up lazily on first save so we don't
+        # pay the import cost when this format isn't requested.
+        self._ptv3_writer = None
+        self._ptv3_requested = PTV3_FORMAT in self.formats_list
+
         logger.debug(
             f"Initialized OutputWriter: "
             f"formats={self.formats_list}, "
@@ -104,6 +113,13 @@ class OutputWriter:
         output_dir.mkdir(parents=True, exist_ok=True)
         num_saved = 0
 
+        # PTv3 routes through a stateful dataset writer; standard formats keep
+        # their existing serializer dispatch.
+        ptv3_active = self._ptv3_requested
+        if ptv3_active:
+            self._ensure_ptv3_writer(output_dir)
+        non_ptv3_formats = [f for f in self.formats_list if f != PTV3_FORMAT]
+
         logger.info(f"  💾 Saving {len(patches)} patches...")
 
         for patch in patches:
@@ -111,19 +127,32 @@ class OutputWriter:
             version = str(patch.pop("_version", "original"))
             base_idx = int(patch.pop("_patch_idx", 0))
 
-            # Determine output path
+            # Determine output path (used for non-PTv3 formats; PTv3 derives
+            # its own layout from the patch_id and the dataset root).
             base_path = self._get_patch_path(
                 laz_file, base_idx, version, output_dir, tile_split
             )
 
-            # Save in requested format(s)
-            if len(self.formats_list) > 1:
-                # Multi-format output
-                num_saved += self._save_patch_multi_format(patch, base_path)
-            else:
-                # Single format output
-                self._save_patch_single_format(patch, base_path, self.formats_list[0])
-                num_saved += 1
+            if ptv3_active:
+                patch_id = f"{laz_file.stem}_p{base_idx:04d}"
+                if version != "original":
+                    patch_id = f"{patch_id}_{version}"
+                target = self._save_patch_ptv3(
+                    patch, tile_id=laz_file.stem, patch_id=patch_id,
+                )
+                if target is not None:
+                    num_saved += 1
+
+            if non_ptv3_formats:
+                if len(non_ptv3_formats) > 1:
+                    num_saved += self._save_patch_multi_format(
+                        patch, base_path, formats=non_ptv3_formats,
+                    )
+                else:
+                    self._save_patch_single_format(
+                        patch, base_path, non_ptv3_formats[0],
+                    )
+                    num_saved += 1
 
             # Record in dataset manager
             if self.dataset_manager is not None:
@@ -135,6 +164,78 @@ class OutputWriter:
 
         logger.info(f"  ✅ Saved {num_saved} patches")
         return num_saved
+
+    # ---------------------------------------------------------------- PTv3
+    def _ensure_ptv3_writer(self, output_dir: Path) -> None:
+        """Build the Ptv3DatasetWriter on first use; reuse afterward."""
+        if self._ptv3_writer is not None:
+            return
+
+        from ..io.formatters import (
+            HashSplitAssigner,
+            Ptv3DatasetWriter,
+            Ptv3Formatter,
+        )
+
+        ptv3_cfg = self.config.output.get("ptv3", {}) if hasattr(self.config, "output") else {}
+        feat_keys = tuple(ptv3_cfg.get("feat_keys", ["intensity", "return_number", "normals"]))
+        label_schema = ptv3_cfg.get("label_schema", "lidar_hd_7cl_contiguous")
+        layout = ptv3_cfg.get("layout", "folder")
+        split_cfg = ptv3_cfg.get("split", {}) or {}
+
+        formatter = Ptv3Formatter(
+            feat_keys=feat_keys,
+            label_schema=label_schema,
+            layout=layout,
+            center_xy=bool(ptv3_cfg.get("center_xy", True)),
+            anchor_z_min=bool(ptv3_cfg.get("anchor_z_min", True)),
+        )
+        assigner = HashSplitAssigner(
+            train=float(split_cfg.get("train", 0.8)),
+            val=float(split_cfg.get("val", 0.1)),
+            test=float(split_cfg.get("test", 0.1)),
+            seed=int(split_cfg.get("seed", 42)),
+        )
+        ptv3_root = Path(output_dir) / "ptv3_dataset"
+        self._ptv3_writer = Ptv3DatasetWriter(
+            formatter=formatter,
+            output_root=ptv3_root,
+            split_assignment=assigner,
+            split_key="tile_id",
+            on_unknown="error",  # HashSplitAssigner always resolves; never triggers
+        )
+        logger.info(
+            "ptv3: dataset writer initialized at %s (feat_keys=%s, layout=%s)",
+            ptv3_root, feat_keys, layout,
+        )
+
+    def _save_patch_ptv3(
+        self,
+        patch: Dict[str, np.ndarray],
+        tile_id: str,
+        patch_id: str,
+    ) -> Optional[Path]:
+        """Push one patch into the Ptv3DatasetWriter.
+
+        Injects ``tile_id`` and ``patch_id`` into the patch dict so the
+        formatter can identify the sample without us mutating the source
+        dictionary the caller still holds.
+        """
+        if self._ptv3_writer is None:
+            raise RuntimeError("_save_patch_ptv3 called before _ensure_ptv3_writer")
+        annotated = {**patch, "tile_id": tile_id, "patch_id": patch_id}
+        return self._ptv3_writer.write_patch(annotated)
+
+    def finalize(self) -> Dict[str, Any]:
+        """Flush any stateful writers (currently: PTv3). Idempotent.
+
+        Returns a summary dict — useful for the orchestrator to log/persist.
+        """
+        summary: Dict[str, Any] = {}
+        if self._ptv3_writer is not None:
+            summary["ptv3"] = self._ptv3_writer.finalize()
+            logger.info("ptv3: finalized dataset — split counts %s", summary["ptv3"])
+        return summary
 
     def save_enriched_laz(
         self,
@@ -334,7 +435,10 @@ class OutputWriter:
         return base_path
 
     def _save_patch_multi_format(
-        self, patch: Dict[str, np.ndarray], base_path: Path
+        self,
+        patch: Dict[str, np.ndarray],
+        base_path: Path,
+        formats: Optional[List[str]] = None,
     ) -> int:
         """
         Save patch in multiple formats.
@@ -342,12 +446,17 @@ class OutputWriter:
         Args:
             patch: Patch dictionary
             base_path: Base path (without extension)
+            formats: Optional override (defaults to ``self.formats_list``).
+                Used when PTv3 is mixed with classic formats: the caller
+                strips PTV3_FORMAT and passes only standard formats here.
 
         Returns:
             Number of formats saved
         """
         from .classification.io import save_patch_multi_format
         from .classification.patch_extractor import format_patch_for_architecture
+
+        formats = formats if formats is not None else self.formats_list
 
         # Format for architecture
         arch_formatted = format_patch_for_architecture(
@@ -360,7 +469,7 @@ class OutputWriter:
         num_saved = save_patch_multi_format(
             base_path,
             arch_formatted,
-            self.formats_list,
+            formats,
             original_patch=patch,
             lod_level=self.lod_level,
         )
