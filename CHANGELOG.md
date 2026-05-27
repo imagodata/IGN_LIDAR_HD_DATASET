@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.0] - 2026-05-27 - PTv3 / Pointcept Export Pipeline 🚀
+
+**Date**: May 27, 2026
+**Focus**: Enable Point Transformer V3 (PTv3) fine-tuning on IGN LiDAR HD by adding a Pointcept-compatible export pipeline.
+
+### Added ✨
+
+- **Ptv3Formatter** (`ign_lidar/io/formatters/ptv3_formatter.py`): per-patch formatter producing the layout expected by `pointcept.datasets.DefaultDataset` (`coord.npy`, `feat.npy`, `segment.npy`). Supports `folder` and `pth` layouts.
+- **Ptv3DatasetWriter** (`ign_lidar/io/formatters/ptv3_writer.py`): orchestrator handling per-split writes (`train/val/test`) and emitting a `meta.json` with label schema, feature layout, and per-split counts.
+- **Split strategies**: `assign_splits_by_tile` (deterministic, all-tiles-known) and `HashSplitAssigner` (stateless MD5-based, incremental — fits the streaming pipeline).
+- **Lidar HD 7-class contiguous schema**: `ASPRS_TO_LIDARHD_7CL`, `remap_asprs_to_lidarhd_7cl`, and `LIDARHD_7CL_NAMES` in `classification_schema.py`. Pointcept losses (CrossEntropy, Lovasz) require contiguous `[0, K-1]` labels with an `ignore_index`.
+- **Hydra preset**: `ign_lidar/configs/presets/ptv3_aerial.yaml`. Disables voxelisation (PTv3 voxelises at train time) and configures `by_tile` splits to prevent spatial leakage.
+- **OutputWriter integration**: new `ptv3_pointcept` output format dispatched through the dedicated writer; can coexist with NPZ/HDF5/LAZ outputs. Exposes `OutputWriter.finalize()` to flush stateful writers.
+- **Test coverage**: 41 tests across unit (formatter, writer), integration (OutputWriter), and end-to-end (minimal Pointcept consumer validates the layout).
+
+### Changed 🔧
+
+- `processor.architecture` Literal extended to accept `"ptv3"` (`ign_lidar/config/schema.py`).
+- Coordinate centering now runs in float64 to preserve sub-metre precision under Lambert93 (EPSG:2154) where float32 precision degrades to ~0.5 m at native magnitudes.
+
+---
+
 ## [4.0.2] - 2026-03-18 - Metadata & Version Sync 📦
 
 **Date**: March 18, 2026  
