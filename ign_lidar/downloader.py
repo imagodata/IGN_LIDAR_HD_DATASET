@@ -27,9 +27,11 @@ class IGNLiDARDownloader:
     """
     
     # IGN LiDAR HD WFS service URL for tile metadata
+    # Note: namespace renommé en 2025 → IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle
+    # Le serveur lit BBOX en ordre lon,lat,lon,lat avec EPSG:4326.
     WFS_URL = ("https://data.geopf.fr/wfs/wfs?SERVICE=WFS&REQUEST=GetFeature&"
-               "VERSION=2.0.0&TYPENAMES=IGNF_LIDAR-HD_TA%3Anuage-dalle&"
-               "OUTPUTFORMAT=application%2Fjson&SRSNAME=EPSG%3A4326")
+               "VERSION=2.0.0&TYPENAMES=IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle&"
+               "OUTPUTFORMAT=application/json&SRSNAME=EPSG:4326")
     
     # IGN LiDAR HD download base URL  
     DOWNLOAD_BASE_URL = "https://data.geopf.fr/telechargement/download/"
@@ -384,13 +386,18 @@ class IGNLiDARDownloader:
             - success: True if download successful or file already exists
             - was_skipped: True if download was skipped (file already present)
         """
+        # Assure une extension .copc.laz si le WFS renvoie le nom sans suffixe
+        save_filename = filename
+        if not save_filename.lower().endswith((".laz", ".las")):
+            save_filename = f"{save_filename}.copc.laz"
+
         # Determine output path with optional subdirectory
         if subdirectory:
             output_dir = self.output_dir / subdirectory
             output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / filename
+            output_path = output_dir / save_filename
         else:
-            output_path = self.output_dir / filename
+            output_path = self.output_dir / save_filename
         
         # Skip if file exists and not forcing
         if output_path.exists() and skip_existing and not force:

@@ -276,8 +276,17 @@ class Ptv3Formatter(BaseFormatter):
         if key == "rgb":
             return np.clip(arr / 255.0, 0.0, 1.0)
         if key == "nir":
-            return np.clip(arr / 65535.0, 0.0, 1.0)
-        # normals already unit vectors, ndvi already in [-1,1], height passes through.
+            # IGN BD ORTHO IRC delivers NIR as uint8 [0, 255], same scale as RGB.
+            return np.clip(arr / 255.0, 0.0, 1.0)
+        if key == "ndvi":
+            # NDVI ∈ [-1, 1] → remap to [0, 1] so spectral channels share scale.
+            return np.clip((arr + 1.0) * 0.5, 0.0, 1.0)
+        if key == "height_above_ground":
+            # AGL > 100 m is rare for aerial Lidar HD (tall trees ≤ 60 m,
+            # buildings ≤ 80 m). Clip + /100 gives a bounded, deterministic input
+            # without per-patch statistics (which collapse on flat ground patches).
+            return np.clip(arr / 100.0, 0.0, 1.0)
+        # normals already unit vectors.
         return arr
 
     def _build_segment(self, labels: np.ndarray) -> np.ndarray:

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.1] - 2026-05-27 - Phase 1 spectral feats + WFS fixes 🛰️
+
+**Date**: May 27, 2026
+**Focus**: In-package enablement for the Phase 1 model survey — 12-dim spectral feature stack for PTv3 / Pointcept training, refreshed scaling, and WFS download fixes against the 2025 IGN namespace.
+
+### Added ✨
+
+- **12-dim PTv3 preset** (`ign_lidar/configs/presets/ptv3_aerial_12d.yaml`): enables RGB + NIR + NDVI + height_above_ground on top of the geometric stack. Feature layout: `[intensity, return_number, num_returns, normals(3), rgb(3), nir, ndvi, height_above_ground]`. Consumed by the out-of-tree Phase 1 training scaffolding (Sonata / Utonia / LitePT-S configs).
+
+### Changed 🔧
+
+- **Spectral feature scaling** in `Ptv3Formatter._scale_feat`: NIR now divided by `255` (uint8 from BD ORTHO IRC, was `/65535`), NDVI remapped from `[-1, 1]` to `[0, 1]`, `height_above_ground` clipped at 100 m and divided by 100. Keeps the spectral block homogeneous with the geometric block for PTv3 / LitePT-S input projections.
+- **WFS download** (`ign_lidar/downloader.py`, `ign_lidar/cli/commands/download.py`): updated typename to the 2025 IGN namespace `IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`, bbox routed to `fetch_available_tiles` (WGS84 native), `--position` rerouted to `find_tiles_by_position`, automatic `.copc.laz` extension fallback when the WFS omits it.
+
+---
+
 ## [4.1.0] - 2026-05-27 - PTv3 / Pointcept Export Pipeline 🚀
 
 **Date**: May 27, 2026

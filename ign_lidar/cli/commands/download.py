@@ -52,23 +52,27 @@ def download_command(ctx, output_dir, bbox, position, radius, max_concurrent, fo
             logger.info(f"Max concurrent: {max_concurrent}")
         
         tiles_to_download = []
-        
+
         if location:
             if location not in STRATEGIC_LOCATIONS:
                 raise click.ClickException(f"Unknown location: {location}")
-            
             loc_data = STRATEGIC_LOCATIONS[location]
-            bbox = [loc_data['xmin'], loc_data['ymin'], loc_data['xmax'], loc_data['ymax']]
-            click.echo(f"Using location '{location}': {loc_data.get('description', '')}")
-            tiles_to_download = downloader.get_tiles_in_bbox(*bbox)
-        
+            bbox = list(loc_data['bbox'])  # (xmin, ymin, xmax, ymax) WGS84
+            click.echo(f"Using location '{location}' ({loc_data.get('category', '?')}): bbox={bbox}")
+
         if bbox:
-            tiles_to_download = downloader.get_tiles_in_bbox(*bbox)
+            # Interroge le WFS IGN (qui parle WGS84 nativement) plutôt que la
+            # conversion locale Lambert93 qui ne marche pas avec des degrés.
+            features = downloader.fetch_available_tiles(bbox=tuple(bbox)).get("features", [])
+            tiles_to_download = [
+                f["properties"]["name"]
+                for f in features
+                if f.get("properties", {}).get("name")
+            ]
         elif position:
             x, y = position
-            tiles_to_download = downloader.get_tiles_around_position(
-                x, y, radius_m=radius
-            )
+            tile_infos = downloader.find_tiles_by_position(x, y, radius_km=radius / 1000.0)
+            tiles_to_download = [t["filename"] for t in tile_infos]
         else:
             raise click.ClickException("Must specify --bbox, --position, or --location")
         

@@ -1,0 +1,89 @@
+# ============================================================================
+# IGN LiDAR HD - Preset: PTv3 Aerial 12D (extended spectral features)
+# ============================================================================
+# Inherits: base.yaml
+#
+# Variant of ptv3_aerial.yaml with the full 12-dim feature stack recommended
+# for Phase 1 of the veille modèle (Sonata / Utonia / LitePT-S fine-tunes).
+#
+# Feature layout (12 dims, in order):
+#   intensity (1) | return_number (1) | num_returns (1) | normals (3)
+#   | rgb (3) | nir (1) | ndvi (1) | height_above_ground (1)
+#
+# All channels are normalised to [0, 1] by ptv3_formatter._scale_feat so the
+# spectral block stays homogeneous with the geometric block.
+# ============================================================================
+
+defaults:
+  - ../base
+  - _self_
+
+config_version: "5.1.0"
+preset_name: "ptv3_aerial_12d"
+
+processor:
+  lod_level: "LOD2"
+  processing_mode: "enriched_and_patches"
+  architecture: "ptv3"
+  use_gpu: true
+  num_workers: 4
+  patch_overlap: 0.0
+  patch_size: 150.0
+  num_points: -1
+  augment: false
+  num_augmentations: 0
+
+features:
+  mode: "lod2"
+  compute_normals: true
+  compute_curvature: false
+  compute_height: true        # height_above_ground required
+  compute_geometric: false
+  compute_architectural: false
+  use_rgb: true               # +3 dims from BD ORTHO 20 cm
+  use_infrared: true          # +1 dim from BD ORTHO IRC
+  compute_ndvi: true          # +1 dim from (NIR - Red) / (NIR + Red)
+
+output:
+  format: "ptv3_pointcept"
+  save_enriched: false
+  save_patches: true
+  save_metadata: true
+  save_stats: true
+
+  ptv3:
+    layout: "folder"
+    feat_keys:
+      - "intensity"
+      - "return_number"
+      - "num_returns"
+      - "normals"
+      - "rgb"
+      - "nir"
+      - "ndvi"
+      - "height_above_ground"
+    label_schema: "lidar_hd_7cl_contiguous"
+    center_xy: true
+    anchor_z_min: true
+
+    split:
+      strategy: "by_tile"
+      train: 0.8
+      val: 0.1
+      test: 0.1
+      seed: 42
+
+data_sources:
+  bd_topo:
+    enabled: true
+    features:
+      buildings: true
+      roads: true
+      water: true
+      vegetation: false
+
+preprocess:
+  enabled: false
+
+stitching:
+  enabled: false

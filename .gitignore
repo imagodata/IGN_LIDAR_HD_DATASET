@@ -135,3 +135,7 @@ docs/.docusaurus/
 docs/build/
 docs/.mypy_cache/
 CLAUDE.md
+
+# Spheron training scaffolding (kept local — contains operator-specific
+# placeholders, downloaded datasets, and run-time logs).
+spheron_training/
