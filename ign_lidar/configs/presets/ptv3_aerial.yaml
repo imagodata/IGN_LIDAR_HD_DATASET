@@ -28,6 +28,11 @@ defaults:
 config_version: "5.1.0"
 preset_name: "ptv3_aerial"
 
+# Phase 4 async optimizer routes tiles through tile_orchestrator.process_tile()
+# which does not exist on TileOrchestrator and silently produces 0 patches.
+# Fall back to the standard sequential path which goes through TileProcessor.
+enable_optimizations: false
+
 # Processor: target PTv3 / Pointcept training pipeline
 processor:
   lod_level: "LOD2"

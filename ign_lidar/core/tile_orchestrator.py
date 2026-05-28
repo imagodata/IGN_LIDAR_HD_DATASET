@@ -171,14 +171,16 @@ class TileOrchestrator:
         features_start = time.time()
         
         features = self.feature_orchestrator.compute_features(
-            points=points,
-            intensity=intensity,
-            return_number=return_number,
-            classification=classification,
-            input_rgb=input_rgb,
-            input_nir=input_nir,
-            input_ndvi=input_ndvi,
-            enriched_features=enriched_features,
+            tile_data={
+                "points": points,
+                "intensity": intensity,
+                "return_number": return_number,
+                "classification": classification,
+                "input_rgb": input_rgb,
+                "input_nir": input_nir,
+                "input_ndvi": input_ndvi,
+                "enriched_features": enriched_features,
+            }
         )
         
         features_time = time.time() - features_start

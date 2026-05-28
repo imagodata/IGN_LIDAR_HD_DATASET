@@ -422,6 +422,11 @@ class ProcessorCore:
         """Cache commonly accessed configuration values."""
         self.lod_level = self.config.processor.lod_level
         self.processing_mode = self.config.processor.processing_mode
+        if self.processing_mode == "enriched_and_patches":
+            save_enriched = OmegaConf.select(
+                self.config, "output.save_enriched", default=True
+            )
+            self.processing_mode = "both" if save_enriched else "patches_only"
         self.patch_size = OmegaConf.select(
             self.config, "processor.patch_size", default=150.0
         )
