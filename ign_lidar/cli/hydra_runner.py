@@ -162,7 +162,10 @@ class HydraRunner:
                     
                     # Handle different default formats
                     if isinstance(default, str):
-                        default_path = self.config_dir / f"{default}.yaml"
+                        if default.startswith('../'):
+                            default_path = self.config_dir / f"{default.replace('../', '')}.yaml"
+                        else:
+                            default_path = self.config_dir / f"{default}.yaml"
                     elif isinstance(default, dict):
                         # Handle override syntax like {preset: lod3}
                         for key, value in default.items():

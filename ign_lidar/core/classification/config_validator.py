@@ -26,8 +26,11 @@ class ConfigValidator:
     - Reclassification mode
     """
     
-    SUPPORTED_FORMATS = ['npz', 'hdf5', 'pytorch', 'torch', 'laz']
-    VALID_PROCESSING_MODES = ["patches_only", "both", "enriched_only", "reclassify_only"]
+    SUPPORTED_FORMATS = ['npz', 'hdf5', 'pytorch', 'torch', 'laz', 'ptv3_pointcept']
+    VALID_PROCESSING_MODES = [
+        "patches_only", "both", "enriched_only", "reclassify_only",
+        "enriched_and_patches",
+    ]
     
     @staticmethod
     def validate_output_format(output_format: str) -> List[str]:

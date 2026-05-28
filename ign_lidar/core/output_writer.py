@@ -55,6 +55,9 @@ class OutputWriter:
         # Output configuration
         self.output_format = config.processor.output_format
         self.processing_mode = config.processor.get("processing_mode", "patches_only")
+        if self.processing_mode == "enriched_and_patches":
+            save_enriched = config.get("output", {}).get("save_enriched", True)
+            self.processing_mode = "both" if save_enriched else "patches_only"
         self.architecture = config.processor.architecture
         self.lod_level = config.processor.lod_level
         self.patch_size = config.processor.patch_size

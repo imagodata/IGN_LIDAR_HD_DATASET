@@ -342,6 +342,11 @@ class LiDARProcessor:
         # Extract commonly used values for convenient access
         self.lod_level = config.processor.lod_level
         self.processing_mode = config.processor.processing_mode
+        if self.processing_mode == "enriched_and_patches":
+            save_enriched = OmegaConf.select(
+                config, "output.save_enriched", default=True
+            )
+            self.processing_mode = "both" if save_enriched else "patches_only"
         self.patch_size = OmegaConf.select(
             config, "processor.patch_size", default=150.0
         )
@@ -2006,10 +2011,13 @@ class LiDARProcessor:
         # Process tiles with optimizations
         logger.info("🚀 Processing with Phase 4 optimizations...")
         
+        gt_enabled = bool(OmegaConf.select(
+            self.config, "ground_truth.enabled", default=False
+        ))
         results = self.optimization_manager.process_tiles_optimized(
             tile_paths=laz_files,
             processor_func=process_tile_optimized,
-            fetch_ground_truth=True,  # Uses Phase 4.1 WFS cache
+            fetch_ground_truth=gt_enabled,
         )
         
         # Aggregate results
