@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.2] - 2026-05-28 - PTv3 / Pointcept pipeline unblock 🔧
+
+**Date**: May 28, 2026
+**Focus**: Bug fixes to unblock the `ptv3_pointcept` export format introduced in 4.1.0 / 4.1.1 — validator gaps, async optimizer regression and feature-orchestrator API drift.
+
+### Fixed 🐛
+
+- **Config validator** (`ign_lidar/core/classification/config_validator.py`): accept `ptv3_pointcept` as a valid `output_format` and `enriched_and_patches` as a valid `processing_mode`. Without this, every PTv3 run aborted at config-validation time on stock presets.
+- **Phase 4 async optimizer regression** (`ign_lidar/configs/presets/ptv3_aerial.yaml`): the async path in `tile_orchestrator.process_tile()` no longer exists and was silently emitting 0 patches when triggered via the preset. The preset now sets `enable_optimizations: false` to force the sequential `TileProcessor` path. Will be re-enabled once the async orchestrator is rewritten against the current `FeatureOrchestrator` API.
+- **`enriched_and_patches` mode handling** (`processor.py`, `processor_core.py`, `output_writer.py`): the user-facing mode now maps internally to `both` or `patches_only` based on `output.save_enriched`, instead of leaving downstream code with an unknown enum value.
+- **Ground-truth fetch toggling** (`processor.py`): `process_tiles_optimized` no longer hard-codes `fetch_ground_truth=True`; the value comes from `ground_truth.enabled` so users running without WFS access aren't forced to enable it.
+- **FeatureOrchestrator API drift** (`tile_orchestrator.py`): `compute_features` is now called with a single `tile_data=` dict instead of the legacy kwargs, matching the current orchestrator signature.
+- **Hydra defaults with `../` prefix** (`cli/hydra_runner.py`): defaults like `- ../base/processor` now resolve to `<config_dir>/base/processor.yaml` instead of producing a `../base/processor.yaml` lookup that always missed.
+
+### Notes 📝
+
+- No behavioural change for existing NPZ / HDF5 / PyTorch / LAZ pipelines.
+- Users on 4.1.0 / 4.1.1 who hit `output_format: ptv3_pointcept` validation errors or empty PTv3 dataset folders should upgrade to 4.1.2.
+
+---
+
 ## [4.1.1] - 2026-05-27 - Phase 1 spectral feats + WFS fixes 🛰️
 
 **Date**: May 27, 2026
