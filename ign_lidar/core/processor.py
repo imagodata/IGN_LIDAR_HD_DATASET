@@ -1924,6 +1924,18 @@ class LiDARProcessor:
             }
             self.dataset_manager.save_metadata(additional_info=additional_info)
 
+        # Finalize stateful writers (PTv3 dataset: flushes meta.json + split
+        # counts). Without this, coord/feat/segment.npy are written but the
+        # dataset has no meta.json and Pointcept can't sanity-check it.
+        _orch = getattr(self, "tile_orchestrator", None)
+        _ow = getattr(_orch, "_output_writer", None) if _orch is not None else None
+        if _ow is not None:
+            try:
+                summary = _ow.finalize()
+                logger.info(f"  ✅ PTv3 dataset finalized — splits {summary}")
+            except Exception as e:
+                logger.warning(f"⚠️  OutputWriter.finalize() failed: {e}")
+
         return total_patches
 
     def _process_directory_optimized(

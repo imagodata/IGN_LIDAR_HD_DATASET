@@ -38,11 +38,17 @@ processor:
   lod_level: "LOD2"
   processing_mode: "enriched_and_patches"
   architecture: "ptv3"
+  # MUST be set here too: the Hydra default (processor.output_format: laz) otherwise
+  # wins over output.format and the PTv3/Pointcept writer is never selected.
+  output_format: "ptv3_pointcept"
   use_gpu: true
   num_workers: 4
-  patch_overlap: 0.0          # no overlap — PTv3 sees voxelised scenes anyway
+  patch_overlap: 0.1          # light overlap: avoids splitting buildings at patch borders (LOD2/LOD3)
   patch_size: 150.0
   num_points: -1              # disabled: PTv3 does not require fixed N
+  min_points: 10000           # drop near-empty patches
+  min_building_points: 300    # building-oriented dataset: keep patches with >= 300 building pts
+  building_class: 6           # ASPRS building class (6)
   augment: false              # all augmentation lives in Pointcept transforms
   num_augmentations: 0
 

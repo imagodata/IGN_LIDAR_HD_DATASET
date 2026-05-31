@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.4] - 2026-05-31 - PTv3/Pointcept export end-to-end 🔧
+
+**Date**: May 31, 2026
+**Focus**: Make the `ptv3_pointcept` export actually produce a dataset on disk. After 4.1.3 unblocked the skip-checker, a cascade of API drifts in the patch path surfaced; this release fixes them so `coord/feat/segment.npy` + `meta.json` are written.
+
+### Fixed 🐛
+
+- **PatchConfig API drift** (`tile_orchestrator.py`): the call passed `num_points`/`min_building_points`, but `PatchConfig` expects `target_num_points`/`min_points`. Mapped correctly (`num_points <= 0 → None`).
+- **extract_and_augment_patches API drift** (`tile_orchestrator.py`): `augmentation_config=` → `augment_config=`; `AugmentationConfig` was built with non-existent `enabled`/`num_augmentations` kwargs.
+- **`ptv3_pointcept` never written** (`tile_orchestrator.py`): `_save_patches` only dispatched npz/hdf5/laz/torch/multi, silently saving 0 patch for `ptv3_pointcept`. It now delegates to `OutputWriter`, the single path that handles every format.
+- **OutputWriter format resolution** (`output_writer.py`): read `config.processor.output_format` directly (wrong/crash on presets that only set `output.format`). Now falls back `processor.output_format → output.format → npz`.
+- **Hydra default override** (`presets/ptv3_aerial.yaml`): the `processor.output_format` default (`laz`) overrode the preset's `output.format: ptv3_pointcept`, so the PTv3 writer was never selected. The preset now sets `processor.output_format: ptv3_pointcept` explicitly.
+- **`meta.json` never written** (`processor.py`): the stateful PTv3 `OutputWriter.finalize()` was never called at end of run. Now finalized in `_process_directory_sequential` (writes `meta.json` + split counts).
+
+### Added ✨
+
+- **Building-oriented patch filter** (`PatchConfig.min_building_points` / `building_class`, `extract_patches`): keep only patches with ≥ N points of the building class (ASPRS 6) — for LOD2/LOD3 datasets. Preset: `min_building_points: 300`.
+- Patch overlap raised to `0.1` in `ptv3_aerial` to avoid splitting buildings at patch borders.
+
+### Notes 📝
+
+- Validated end-to-end on an IGN tile: **64 building patches** → `ptv3_dataset/<split>/<id>/{coord,feat,segment}.npy` + `meta.json`.
+
+---
+
 ## [4.1.3] - 2026-05-31 - Skip-checker tuple bug → empty datasets 🔧
 
 **Date**: May 31, 2026
