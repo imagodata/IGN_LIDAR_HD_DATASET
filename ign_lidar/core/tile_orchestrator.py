@@ -509,9 +509,19 @@ class TileOrchestrator:
             Number of patches created
         """
         # Check if should skip
-        if skip_existing and self.skip_checker.should_skip_tile(laz_file, output_dir):
-            logger.info(f"{progress_prefix} ⏭️  Skipping (patches exist)")
-            return 0
+        # NOTE: should_skip_tile() returns a (bool, dict) tuple. It MUST be
+        # unpacked — testing the tuple directly is always truthy and would skip
+        # every tile (even with zero existing patches → 0 patches ever created).
+        if skip_existing:
+            should_skip, skip_info = self.skip_checker.should_skip_tile(
+                laz_file, output_dir
+            )
+            if should_skip:
+                logger.info(
+                    f"{progress_prefix} ⏭️  Skipping "
+                    f"({skip_info.get('reason', 'patches exist')})"
+                )
+                return 0
 
         logger.info(f"{progress_prefix} Extracting patches...")
         

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.3] - 2026-05-31 - Skip-checker tuple bug → empty datasets 🔧
+
+**Date**: May 31, 2026
+**Focus**: Critical fix — `should_skip_tile()` returns a tuple that was tested as a boolean, so every tile was skipped and the dataset came out empty.
+
+### Fixed 🐛
+
+- **Skip check always true** (`core/tile_orchestrator.py`, `core/processor.py`): `PatchSkipChecker.should_skip_tile()` returns a `(bool, dict)` tuple, but two call sites tested the tuple directly — `if self.skip_checker.should_skip_tile(...)`. A non-empty tuple is always truthy in Python, so the branch was taken even when `should_skip=False` (`reason='no_patches_found'`). Effect: every tile was skipped at patch extraction (`⏭️  Skipping (patches exist)`) and **0 patches were ever created** — the run completed "successfully" with an empty dataset, regardless of what was on disk. Both sites now unpack `should_skip, skip_info` and branch on `should_skip`; the skip reason is surfaced in the log message. The three other call sites already unpacked the tuple correctly.
+
+### Notes 📝
+
+- Complements the 4.1.2 empty-PTv3-dataset fix: 4.1.2 addressed the async-optimizer path via the preset (`enable_optimizations: false`); 4.1.3 fixes the underlying tuple-truthiness bug in the **sequential `TileProcessor` path** (the one `ptv3_aerial` actually uses) as well as the Phase-4 path.
+- Anyone seeing `Skipping (patches exist)` while no patches exist on disk should upgrade.
+
+---
+
 ## [4.1.2] - 2026-05-28 - PTv3 / Pointcept pipeline unblock 🔧
 
 **Date**: May 28, 2026

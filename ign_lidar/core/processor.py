@@ -1988,9 +1988,18 @@ class LiDARProcessor:
                 tile_path = Path(tile_data.file_path) if hasattr(tile_data, 'file_path') else None
                 
                 # Check if should skip
+                # NOTE: should_skip_tile() returns a (bool, dict) tuple — it must
+                # be unpacked. Testing the tuple directly is always truthy and
+                # would skip every tile (0 patches ever created).
                 if skip_existing and tile_path:
-                    if self.skip_checker.should_skip_tile(tile_path, output_dir):
-                        logger.debug(f"⏭️  Skipping {tile_path.name} (patches exist)")
+                    should_skip, skip_info = self.skip_checker.should_skip_tile(
+                        tile_path, output_dir
+                    )
+                    if should_skip:
+                        logger.debug(
+                            f"⏭️  Skipping {tile_path.name} "
+                            f"({skip_info.get('reason', 'patches exist')})"
+                        )
                         return {'num_patches': 0, 'num_points': len(tile_data.points), 'skipped': True}
                 
                 # Process using tile orchestrator
