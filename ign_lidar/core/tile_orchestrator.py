@@ -79,6 +79,9 @@ class TileOrchestrator:
             data_fetcher: Optional DataFetcher for ground truth data (buildings, etc.)
         """
         self.config = config
+        # Lazy OutputWriter: the single save path that handles every configured
+        # format, including 'ptv3_pointcept' (coord/feat/segment.npy + meta.json).
+        self._output_writer = None
         self.feature_orchestrator = feature_orchestrator
         self.classifier = classifier
         self.data_fetcher = data_fetcher
@@ -525,22 +528,35 @@ class TileOrchestrator:
 
         logger.info(f"{progress_prefix} Extracting patches...")
         
-        # Configure patch extraction
+        # Configure patch extraction.
+        # NOTE: map config -> PatchConfig field names (API drift fix):
+        #   num_points -> target_num_points (<=0 means "no resampling" -> None)
+        #   min_building_points -> kept as building-class filter (LOD2/LOD3 dataset)
+        _num_points = OmegaConf.select(
+            self.config, "processor.num_points", default=-1
+        )
         patch_config = PatchConfig(
             patch_size=self.config.processor.patch_size,
-            num_points=self.config.processor.num_points,
-            min_building_points=OmegaConf.select(
-                self.config, "processor.min_building_points", default=100
-            ),
             overlap=OmegaConf.select(
-                self.config, "processor.patch_overlap", default=0.0
+                self.config, "processor.patch_overlap", default=0.1
+            ),
+            target_num_points=(_num_points if _num_points and _num_points > 0 else None),
+            min_points=OmegaConf.select(
+                self.config, "processor.min_points", default=10000
+            ),
+            min_building_points=OmegaConf.select(
+                self.config, "processor.min_building_points", default=300
+            ),
+            building_class=OmegaConf.select(
+                self.config, "processor.building_class", default=6
             ),
         )
         
-        augmentation_config = AugmentationConfig(
-            enabled=self.augment,
-            num_augmentations=self.num_augmentations,
-        ) if self.augment else None
+        # PatchConfig carries the augment flags; AugmentationConfig only holds
+        # the augmentation hyper-params (its defaults are fine).
+        patch_config.augment = self.augment
+        patch_config.num_augmentations = self.num_augmentations
+        augment_config = AugmentationConfig() if self.augment else None
 
         # Extract patches
         patches = extract_and_augment_patches(
@@ -548,7 +564,7 @@ class TileOrchestrator:
             features=features,
             labels=classification,
             patch_config=patch_config,
-            augmentation_config=augmentation_config,
+            augment_config=augment_config,
         )
 
         if len(patches) == 0:
@@ -587,39 +603,25 @@ class TileOrchestrator:
         Returns:
             Number of patches saved
         """
-        num_saved = 0
-        
-        for idx, patch in enumerate(patches):
-            patch_name = f"{laz_file.stem}_patch_{idx:04d}"
-            
-            # Add architectural style if enabled
-            if self.include_architectural_style:
+        # Attach architectural-style metadata (consumed by the writers).
+        if self.include_architectural_style:
+            for patch in patches:
                 patch["architectural_style_id"] = architectural_style_id
                 if multi_styles:
                     patch["multi_styles"] = multi_styles
 
-            # Save in requested format(s)
-            if self.output_format == "npz":
-                output_file = output_dir / f"{patch_name}.npz"
-                save_patch_npz(patch, output_file)
-                num_saved += 1
-            elif self.output_format == "hdf5":
-                output_file = output_dir / f"{patch_name}.h5"
-                save_patch_hdf5(patch, output_file)
-                num_saved += 1
-            elif self.output_format == "laz":
-                output_file = output_dir / f"{patch_name}.laz"
-                save_patch_laz(patch, output_file)
-                num_saved += 1
-            elif self.output_format == "torch":
-                output_file = output_dir / f"{patch_name}.pt"
-                save_patch_torch(patch, output_file)
-                num_saved += 1
-            elif self.output_format == "multi":
-                save_patch_multi_format(patch, output_dir, patch_name)
-                num_saved += 1
-                
-        return num_saved
+        # Delegate to OutputWriter — the single save path that knows every
+        # configured format, including 'ptv3_pointcept' (coord/feat/segment.npy
+        # + meta.json). The inline dispatch only handled npz/hdf5/laz/torch/multi,
+        # so 'ptv3_pointcept' silently saved 0 patch.
+        if self._output_writer is None:
+            from .output_writer import OutputWriter
+            self._output_writer = OutputWriter(self.config, dataset_manager=None)
+        return self._output_writer.save_patches(
+            patches=patches,
+            laz_file=laz_file,
+            output_dir=output_dir,
+        )
 
     def _augment_ground_with_dtm(
         self,

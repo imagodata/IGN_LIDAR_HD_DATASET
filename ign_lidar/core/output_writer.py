@@ -52,8 +52,14 @@ class OutputWriter:
         self.config = config
         self.dataset_manager = dataset_manager
 
-        # Output configuration
-        self.output_format = config.processor.output_format
+        # Output configuration.
+        # Format lives under processor.output_format OR output.format (preset),
+        # fall back to npz. Direct attribute access used to crash on presets
+        # that only set output.format (e.g. ptv3_aerial -> 'ptv3_pointcept').
+        self.output_format = (
+            config.processor.get("output_format", None)
+            or config.get("output", {}).get("format", "npz")
+        )
         self.processing_mode = config.processor.get("processing_mode", "patches_only")
         if self.processing_mode == "enriched_and_patches":
             save_enriched = config.get("output", {}).get("save_enriched", True)

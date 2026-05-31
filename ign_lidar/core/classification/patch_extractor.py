@@ -41,6 +41,8 @@ class PatchConfig:
     overlap: float = 0.1
     min_points: int = 10000
     target_num_points: Optional[int] = None
+    min_building_points: int = 0       # 0 = disabled ; >0 keeps only patches with
+    building_class: int = 6            # >= N points of this class (ASPRS 6 = building)
     augment: bool = False
     num_augmentations: int = 3
 
@@ -75,6 +77,8 @@ def extract_patches(
     overlap: float = 0.1,
     min_points: int = 10000,
     target_num_points: Optional[int] = None,
+    min_building_points: int = 0,
+    building_class: int = 6,
     logger_instance: Optional[logging.Logger] = None
 ) -> List[Dict[str, np.ndarray]]:
     """Extract patches from point cloud with overlap.
@@ -132,10 +136,17 @@ def extract_patches(
             num_points_in_patch = np.sum(mask)
             if num_points_in_patch < min_points:
                 continue
-            
+
             # Extract patch data
             patch_points = points[mask]
             patch_labels = labels[mask]
+
+            # Building-oriented filter: keep the patch only if it holds enough
+            # points of the building class (LOD2/LOD3 dataset). Disabled if 0.
+            if min_building_points > 0:
+                n_building = int(np.count_nonzero(patch_labels == building_class))
+                if n_building < min_building_points:
+                    continue
             
             # Center patch coordinates
             patch_center = np.array([
@@ -550,6 +561,8 @@ def extract_and_augment_patches(
         overlap=patch_config.overlap,
         min_points=patch_config.min_points,
         target_num_points=patch_config.target_num_points,
+        min_building_points=patch_config.min_building_points,
+        building_class=patch_config.building_class,
         logger_instance=log
     )
     
