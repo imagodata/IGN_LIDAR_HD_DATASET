@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.5] - 2026-05-31 - Enriched feature stack for LOD2 segmentation 🎨
+
+**Focus**: Richer PTv3 input features for building segmentation (spectral + geometry). The model is unchanged — PTv3 is feature-agnostic; the lever for LOD2 is the input feature set.
+
+### Added ✨
+
+- **`SUPPORTED_FEAT_KEYS`** += `planarity`, `linearity`, `verticality`, `wall_score`, `roof_score` (geometric/architectural descriptors, bounded ~[0,1]; `_scale_feat` clips defensively).
+- **preset `ptv3_aerial`**:
+  - `feat_keys` = `rgb, ndvi, height_above_ground, normals, verticality, planarity, wall_score, roof_score, return_number` (feat_dim **5 → 13**).
+  - `features`: enabled `use_rgb`, `use_infrared`, `compute_ndvi`, `compute_geometric`, `compute_architectural` so those features are actually produced.
+
+### Notes 📝
+
+- Enables **BD ORTHO + IRC fetch per tile** (slower, network-dependent on IGN WFS).
+- Rationale: RGB/NDVI separate mineral vs vegetation (kills veg false-positives on roofs); height + geometry + wall/roof scores are strong building cues.
+- Validated: `format_patch` → `feat (N, 13)`.
+
+---
+
 ## [4.1.4] - 2026-05-31 - PTv3/Pointcept export end-to-end 🔧
 
 **Date**: May 31, 2026
