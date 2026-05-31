@@ -52,6 +52,13 @@ SUPPORTED_FEAT_KEYS: Dict[str, int] = {
     "nir": 1,
     "rgb": 3,
     "height_above_ground": 1,
+    # Geometric descriptors (LOD2/LOD3 building discrimination). Already bounded
+    # ~[0,1] by the feature engine, so _scale_feat passes them through.
+    "planarity": 1,
+    "linearity": 1,
+    "verticality": 1,
+    "wall_score": 1,
+    "roof_score": 1,
 }
 
 LABEL_SCHEMAS = ("lidar_hd_7cl_contiguous", "raw")
@@ -286,6 +293,9 @@ class Ptv3Formatter(BaseFormatter):
             # buildings ≤ 80 m). Clip + /100 gives a bounded, deterministic input
             # without per-patch statistics (which collapse on flat ground patches).
             return np.clip(arr / 100.0, 0.0, 1.0)
+        if key in ("planarity", "linearity", "verticality", "wall_score", "roof_score"):
+            # Geometric descriptors are already ~[0,1]; clip defensively.
+            return np.clip(arr, 0.0, 1.0)
         # normals already unit vectors.
         return arr
 
