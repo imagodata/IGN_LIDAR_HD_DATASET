@@ -12,6 +12,11 @@ Layout (per patch):
             coord.npy     # (N, 3) float32 — XY centered on patch, Z anchored at z_min
             feat.npy      # (N, F) float32 — feature stack chosen via `feat_keys`
             segment.npy   # (N,)   int16   — contiguous Lidar HD labels (or -1 for ignore)
+            offset.npy    # (3,)   float64 — [cx, cy, zmin] subtracted in _build_coord;
+                          #                  coord_absolute = coord + offset (Lambert93).
+                          #                  Required to re-project predictions onto the
+                          #                  source tile at inference (overlap + resampling
+                          #                  make an exact point index impossible).
 
 The formatter does NOT voxelize. PTv3 voxelizes at training time via Pointcept's
 `GridSample` transform (recommended `grid_size=0.15` for aerial Lidar HD).
@@ -126,7 +131,7 @@ class Ptv3Formatter(BaseFormatter):
         if "labels" not in patch:
             raise KeyError("patch missing required 'labels' key")
 
-        coord = self._build_coord(patch["points"])
+        coord, offset = self._build_coord(patch["points"])
         feat, feat_layout = self._build_feat(patch, coord.shape[0])
         segment = self._build_segment(patch["labels"])
 
@@ -134,6 +139,7 @@ class Ptv3Formatter(BaseFormatter):
             "coord": coord,
             "feat": feat,
             "segment": segment,
+            "offset": offset,
             "name": str(patch.get("patch_id", patch.get("name", "patch"))),
             "tile_id": patch.get("tile_id"),
             "feat_layout": feat_layout,
@@ -158,6 +164,11 @@ class Ptv3Formatter(BaseFormatter):
             np.save(tile_dir / "coord.npy", formatted["coord"].astype(np.float32))
             np.save(tile_dir / "feat.npy", formatted["feat"].astype(np.float32))
             np.save(tile_dir / "segment.npy", formatted["segment"].astype(np.int16))
+            # offset = [cx, cy, zmin] : coord_absolute = coord + offset. Additif,
+            # ignoré par Pointcept (charge coord/feat/segment) ; sert au writeback
+            # des prédictions vers la tuile source à l'inférence.
+            if formatted.get("offset") is not None:
+                np.save(tile_dir / "offset.npy", np.asarray(formatted["offset"], dtype=np.float64))
             return tile_dir
 
         # pth layout
@@ -168,15 +179,15 @@ class Ptv3Formatter(BaseFormatter):
                 "layout='pth' requires PyTorch. Install torch or use layout='folder'."
             ) from exc
         target = output_dir / f"{name}.pth"
-        torch.save(
-            {
-                "coord": torch.from_numpy(formatted["coord"].astype(np.float32)),
-                "feat": torch.from_numpy(formatted["feat"].astype(np.float32)),
-                "segment": torch.from_numpy(formatted["segment"].astype(np.int64)),
-                "name": name,
-            },
-            target,
-        )
+        record = {
+            "coord": torch.from_numpy(formatted["coord"].astype(np.float32)),
+            "feat": torch.from_numpy(formatted["feat"].astype(np.float32)),
+            "segment": torch.from_numpy(formatted["segment"].astype(np.int64)),
+            "name": name,
+        }
+        if formatted.get("offset") is not None:
+            record["offset"] = torch.from_numpy(np.asarray(formatted["offset"], dtype=np.float64))
+        torch.save(record, target)
         return target
 
     def write_meta(self, output_root: Path, num_patches_per_split: Optional[Dict[str, int]] = None) -> Path:
@@ -216,17 +227,28 @@ class Ptv3Formatter(BaseFormatter):
 
     # ---------------------------------------------------------------- helpers
 
-    def _build_coord(self, points: np.ndarray) -> np.ndarray:
+    def _build_coord(self, points: np.ndarray) -> tuple:
+        """Recenter coords and return ``(coord_f32, offset_f64)``.
+
+        ``offset = [cx, cy, zmin]`` holds exactly what was subtracted, so the
+        absolute Lambert93 coords are recoverable via ``coord + offset``. This
+        is what lets inference re-project per-patch predictions back onto the
+        source tile (patch overlap + resampling rule out an exact point index).
+        ``offset`` is 0 on axes left untouched (``center_xy``/``anchor_z_min``).
+        """
         if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError(f"points must be (N,3), got {points.shape}")
         # Center in float64 — Lambert93 coords are ~7e6 so float32 precision (~0.5m
         # at that magnitude) corrupts the centroid before we can subtract it.
         coord = points.astype(np.float64, copy=True)
+        offset = np.zeros(3, dtype=np.float64)
         if self.center_xy:
-            coord[:, :2] -= coord[:, :2].mean(axis=0)
+            offset[:2] = coord[:, :2].mean(axis=0)
+            coord[:, :2] -= offset[:2]
         if self.anchor_z_min:
-            coord[:, 2] -= coord[:, 2].min()
-        return coord.astype(np.float32)
+            offset[2] = coord[:, 2].min()
+            coord[:, 2] -= offset[2]
+        return coord.astype(np.float32), offset
 
     def _build_feat(self, patch: Dict[str, np.ndarray], n_points: int) -> tuple:
         cols: List[np.ndarray] = []

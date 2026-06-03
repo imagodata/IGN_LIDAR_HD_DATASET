@@ -103,6 +103,22 @@ class TestFormatPatch:
         out = fmt.format_patch(patch)
         assert not np.allclose(out["coord"][:, :2].mean(axis=0), 0.0, atol=1.0)
 
+    def test_offset_recovers_absolute_coords(self):
+        # coord + offset doit reconstituer les coords absolues Lambert93 — c'est
+        # ce qui permet de reprojeter les prédictions sur la tuile à l'inférence.
+        patch = _synthetic_patch(n=256)
+        fmt = Ptv3Formatter()
+        out = fmt.format_patch(patch)
+        assert out["offset"].shape == (3,) and out["offset"].dtype == np.float64
+        recovered = out["coord"].astype(np.float64) + out["offset"]
+        assert np.allclose(recovered, patch["points"].astype(np.float64), atol=1e-2)
+
+    def test_offset_zero_without_recentering(self):
+        patch = _synthetic_patch(n=64)
+        fmt = Ptv3Formatter(center_xy=False, anchor_z_min=False)
+        out = fmt.format_patch(patch)
+        assert np.allclose(out["offset"], 0.0)
+
     def test_missing_optional_feature_zero_filled(self):
         patch = _synthetic_patch(n=64)
         del patch["intensity"]
@@ -181,6 +197,11 @@ class TestWritePatch:
         assert coord.shape == (128, 3) and coord.dtype == np.float32
         assert feat.shape[0] == 128 and feat.dtype == np.float32
         assert segment.shape == (128,) and segment.dtype == np.int16
+        # offset.npy écrit et cohérent (coord + offset = absolu).
+        offset = np.load(tile_dir / "offset.npy")
+        assert offset.shape == (3,) and offset.dtype == np.float64
+        recovered = coord.astype(np.float64) + offset
+        assert np.allclose(recovered, patch["points"].astype(np.float64), atol=1e-2)
 
     def test_pth_layout(self, tmp_path: Path):
         torch = pytest.importorskip("torch")
