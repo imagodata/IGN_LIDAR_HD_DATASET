@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.6] - 2026-07-24 - Safe PTv3 coordinate round-trip
+
+### Added
+
+- Per-patch coordinate metadata with the source CRS, source extent, absolute
+  patch extent, and the explicit `coord_absolute = coord + offset` contract.
+- Optional source point indices preserved through patch filtering and
+  resampling.
+- An end-to-end regression test using the real patch extractor before the PTv3
+  formatter.
+
+### Fixed
+
+- PTv3 patch offsets now combine the extractor's `_patch_center` with the
+  formatter recentering offset, preserving absolute Lambert-93 coordinates
+  through inference writeback.
+
+---
+
 ## [4.1.5] - 2026-05-31 - Enriched feature stack for LOD2 segmentation 🎨
 
 **Focus**: Richer PTv3 input features for building segmentation (spectral + geometry). The model is unchanged — PTv3 is feature-agnostic; the lever for LOD2 is the input feature set.
