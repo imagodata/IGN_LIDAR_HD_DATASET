@@ -120,6 +120,11 @@ class PatchExtractor:
             patch_config=self.patch_config,
             augment_config=self.aug_config if self.augment else None,
             architecture=self.architecture,
+            source_crs=(metadata or {}).get("crs", "EPSG:2154"),
+            source_bbox=(metadata or {}).get(
+                "source_bbox", (metadata or {}).get("bounds")
+            ),
+            source_indices=(metadata or {}).get("source_indices"),
             logger_instance=logger,
         )
 

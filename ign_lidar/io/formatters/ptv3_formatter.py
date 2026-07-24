@@ -12,11 +12,13 @@ Layout (per patch):
             coord.npy     # (N, 3) float32 — XY centered on patch, Z anchored at z_min
             feat.npy      # (N, F) float32 — feature stack chosen via `feat_keys`
             segment.npy   # (N,)   int16   — contiguous Lidar HD labels (or -1 for ignore)
-            offset.npy    # (3,)   float64 — [cx, cy, zmin] subtracted in _build_coord;
+            offset.npy    # (3,)   float64 — global offset (extractor + formatter);
                           #                  coord_absolute = coord + offset (Lambert93).
                           #                  Required to re-project predictions onto the
                           #                  source tile at inference (overlap + resampling
                           #                  make an exact point index impossible).
+            metadata.json # CRS, source bbox, absolute patch bbox and coordinate contract.
+            source_indices.npy  # optional indices into the source cloud.
 
 The formatter does NOT voxelize. PTv3 voxelizes at training time via Pointcept's
 `GridSample` transform (recommended `grid_size=0.15` for aerial Lidar HD).
@@ -131,7 +133,14 @@ class Ptv3Formatter(BaseFormatter):
         if "labels" not in patch:
             raise KeyError("patch missing required 'labels' key")
 
-        coord, offset = self._build_coord(patch["points"])
+        coord, formatter_offset = self._build_coord(patch["points"])
+        patch_center = self._get_patch_center(patch)
+        offset = patch_center + formatter_offset
+        absolute_coord = coord.astype(np.float64) + offset
+        patch_bbox = self._bbox_3d(absolute_coord)
+        source_bbox = self._get_source_bbox(patch, patch_bbox)
+        source_indices = self._get_source_indices(patch, coord.shape[0])
+        crs = patch.get("_crs", patch.get("crs", "EPSG:2154"))
         feat, feat_layout = self._build_feat(patch, coord.shape[0])
         segment = self._build_segment(patch["labels"])
 
@@ -140,6 +149,10 @@ class Ptv3Formatter(BaseFormatter):
             "feat": feat,
             "segment": segment,
             "offset": offset,
+            "patch_bbox": patch_bbox,
+            "source_bbox": source_bbox,
+            "crs": None if crs is None else str(crs),
+            "source_indices": source_indices,
             "name": str(patch.get("patch_id", patch.get("name", "patch"))),
             "tile_id": patch.get("tile_id"),
             "feat_layout": feat_layout,
@@ -169,6 +182,15 @@ class Ptv3Formatter(BaseFormatter):
             # des prédictions vers la tuile source à l'inférence.
             if formatted.get("offset") is not None:
                 np.save(tile_dir / "offset.npy", np.asarray(formatted["offset"], dtype=np.float64))
+            metadata = self._coordinate_metadata(formatted)
+            (tile_dir / "metadata.json").write_text(
+                json.dumps(metadata, indent=2, sort_keys=True)
+            )
+            if formatted.get("source_indices") is not None:
+                np.save(
+                    tile_dir / "source_indices.npy",
+                    np.asarray(formatted["source_indices"], dtype=np.int64),
+                )
             return tile_dir
 
         # pth layout
@@ -187,6 +209,11 @@ class Ptv3Formatter(BaseFormatter):
         }
         if formatted.get("offset") is not None:
             record["offset"] = torch.from_numpy(np.asarray(formatted["offset"], dtype=np.float64))
+        record["metadata"] = self._coordinate_metadata(formatted)
+        if formatted.get("source_indices") is not None:
+            record["source_indices"] = torch.from_numpy(
+                np.asarray(formatted["source_indices"], dtype=np.int64)
+            )
         torch.save(record, target)
         return target
 
@@ -207,7 +234,7 @@ class Ptv3Formatter(BaseFormatter):
             inverse = {}
 
         meta = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "formatter": "Ptv3Formatter",
             "label_schema": self.label_schema,
             "label_names": label_names,
@@ -219,6 +246,9 @@ class Ptv3Formatter(BaseFormatter):
             "coord_dim": 3,
             "center_xy": self.center_xy,
             "anchor_z_min": self.anchor_z_min,
+            "coordinate_contract": "coord_absolute = coord + offset",
+            "patch_metadata": "metadata.json",
+            "default_crs": "EPSG:2154",
             "splits": num_patches_per_split or {},
         }
         target = output_root / "meta.json"
@@ -227,14 +257,78 @@ class Ptv3Formatter(BaseFormatter):
 
     # ---------------------------------------------------------------- helpers
 
+    @staticmethod
+    def _get_patch_center(patch: Dict[str, Any]) -> np.ndarray:
+        """Return the offset already subtracted by the patch extractor."""
+        center = np.asarray(
+            patch.get("_patch_center", np.zeros(3)), dtype=np.float64
+        ).ravel()
+        if center.shape != (3,) or not np.isfinite(center).all():
+            raise ValueError("_patch_center must contain three finite values")
+        return center
+
+    @staticmethod
+    def _bbox_3d(points: np.ndarray) -> np.ndarray:
+        if len(points) == 0:
+            raise ValueError("cannot compute a bounding box for an empty patch")
+        return np.concatenate((points.min(axis=0), points.max(axis=0))).astype(
+            np.float64
+        )
+
+    @staticmethod
+    def _get_source_bbox(
+        patch: Dict[str, Any], patch_bbox: np.ndarray
+    ) -> np.ndarray:
+        source_bbox = patch.get("_source_bbox", patch.get("source_bbox"))
+        if source_bbox is None:
+            return patch_bbox.copy()
+        source_bbox = np.asarray(source_bbox, dtype=np.float64).ravel()
+        if source_bbox.shape != (6,) or not np.isfinite(source_bbox).all():
+            raise ValueError(
+                "_source_bbox/source_bbox must be six finite values "
+                "(xmin, ymin, zmin, xmax, ymax, zmax)"
+            )
+        return source_bbox
+
+    @staticmethod
+    def _get_source_indices(
+        patch: Dict[str, Any], n_points: int
+    ) -> Optional[np.ndarray]:
+        source_indices = patch.get("source_indices")
+        if source_indices is None:
+            return None
+        source_indices = np.asarray(source_indices)
+        if source_indices.ndim != 1 or len(source_indices) != n_points:
+            raise ValueError(
+                "source_indices must be a 1-D array with one entry per point"
+            )
+        if not np.issubdtype(source_indices.dtype, np.integer):
+            raise ValueError("source_indices must contain integers")
+        return source_indices.astype(np.int64, copy=False)
+
+    @staticmethod
+    def _coordinate_metadata(formatted: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the JSON-safe, versioned coordinate contract for one patch."""
+        return {
+            "schema_version": "1.0",
+            "coordinate_contract": "coord_absolute = coord + offset",
+            "crs": formatted.get("crs"),
+            "source_bbox": np.asarray(
+                formatted["source_bbox"], dtype=np.float64
+            ).tolist(),
+            "patch_bbox": np.asarray(
+                formatted["patch_bbox"], dtype=np.float64
+            ).tolist(),
+            "tile_id": formatted.get("tile_id"),
+            "has_source_indices": formatted.get("source_indices") is not None,
+        }
+
     def _build_coord(self, points: np.ndarray) -> tuple:
         """Recenter coords and return ``(coord_f32, offset_f64)``.
 
-        ``offset = [cx, cy, zmin]`` holds exactly what was subtracted, so the
-        absolute Lambert93 coords are recoverable via ``coord + offset``. This
-        is what lets inference re-project per-patch predictions back onto the
-        source tile (patch overlap + resampling rule out an exact point index).
-        ``offset`` is 0 on axes left untouched (``center_xy``/``anchor_z_min``).
+        The returned offset only represents this formatter's transform. The
+        caller adds the extractor's ``_patch_center`` before persisting it, so
+        the public ``offset`` is global and ``coord + offset`` is absolute.
         """
         if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError(f"points must be (N,3), got {points.shape}")

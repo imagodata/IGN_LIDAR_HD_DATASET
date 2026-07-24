@@ -14,7 +14,7 @@ Extracted from processor.py and preprocessing/utils.py as part of Phase 4 refact
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -79,6 +79,9 @@ def extract_patches(
     target_num_points: Optional[int] = None,
     min_building_points: int = 0,
     building_class: int = 6,
+    source_crs: Optional[str] = "EPSG:2154",
+    source_bbox: Optional[Sequence[float]] = None,
+    source_indices: Optional[np.ndarray] = None,
     logger_instance: Optional[logging.Logger] = None
 ) -> List[Dict[str, np.ndarray]]:
     """Extract patches from point cloud with overlap.
@@ -94,6 +97,12 @@ def extract_patches(
         overlap: Overlap ratio between patches (0-1)
         min_points: Minimum points required per patch
         target_num_points: Target number of points (None = no resampling)
+        source_crs: CRS of ``points``. IGN LiDAR HD defaults to Lambert-93.
+        source_bbox: Optional source extent as
+            ``(xmin, ymin, zmin, xmax, ymax, zmax)``. Computed from ``points``
+            when omitted.
+        source_indices: Optional indices mapping ``points`` back to the source
+            point cloud. They are filtered/resampled together with the patch.
         logger_instance: Optional logger instance
         
     Returns:
@@ -102,9 +111,37 @@ def extract_patches(
         - 'labels': Point labels [M]
         - '_patch_center': Original center coordinates in tile space [3]
         - '_patch_bounds': Patch bounds (x_start, y_start, x_end, y_end)
+        - '_source_bbox': Source point-cloud extent [6]
+        - '_crs': Source CRS identifier
+        - 'source_indices': Optional point-wise indices into the source cloud
         - Additional features from features dict
     """
     log = logger_instance or logger
+
+    points = np.asarray(points)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"points must be (N,3), got {points.shape}")
+    if len(points) == 0:
+        return []
+    if source_indices is not None:
+        source_indices = np.asarray(source_indices)
+        if source_indices.ndim != 1 or len(source_indices) != len(points):
+            raise ValueError(
+                "source_indices must be a 1-D array with one entry per point"
+            )
+
+    if source_bbox is None:
+        source_min = points.astype(np.float64, copy=False).min(axis=0)
+        source_max = points.astype(np.float64, copy=False).max(axis=0)
+        source_bbox_array = np.concatenate((source_min, source_max))
+    else:
+        source_bbox_array = np.asarray(source_bbox, dtype=np.float64).ravel()
+        if source_bbox_array.shape != (6,):
+            raise ValueError(
+                "source_bbox must be (xmin, ymin, zmin, xmax, ymax, zmax)"
+            )
+    if not np.isfinite(source_bbox_array).all():
+        raise ValueError("source_bbox contains NaN or infinite values")
     
     # Compute bounding box
     x_min, y_min = points[:, :2].min(axis=0)
@@ -162,7 +199,11 @@ def extract_patches(
                 'labels': patch_labels,
                 '_patch_center': patch_center,  # Store for debugging/validation
                 '_patch_bounds': (x_start, y_start, x_end, y_end),  # Store bounds
+                '_source_bbox': source_bbox_array.copy(),
+                '_crs': source_crs,
             }
+            if source_indices is not None:
+                patch['source_indices'] = source_indices[mask]
             
             # Add features
             for feature_name, feature_data in features.items():
@@ -524,6 +565,9 @@ def extract_and_augment_patches(
     patch_config: PatchConfig,
     augment_config: Optional[AugmentationConfig] = None,
     architecture: Optional[str] = None,
+    source_crs: Optional[str] = "EPSG:2154",
+    source_bbox: Optional[Sequence[float]] = None,
+    source_indices: Optional[np.ndarray] = None,
     logger_instance: Optional[logging.Logger] = None
 ) -> List[Dict[str, np.ndarray]]:
     """Complete pipeline: extract patches + create augmented versions.
@@ -540,6 +584,9 @@ def extract_and_augment_patches(
         patch_config: Patch extraction configuration
         augment_config: Augmentation configuration
         architecture: Target architecture name (optional)
+        source_crs: CRS of the source point cloud.
+        source_bbox: Optional full source extent [6].
+        source_indices: Optional indices into the source point cloud.
         logger_instance: Optional logger instance
         
     Returns:
@@ -563,6 +610,9 @@ def extract_and_augment_patches(
         target_num_points=patch_config.target_num_points,
         min_building_points=patch_config.min_building_points,
         building_class=patch_config.building_class,
+        source_crs=source_crs,
+        source_bbox=source_bbox,
+        source_indices=source_indices,
         logger_instance=log
     )
     

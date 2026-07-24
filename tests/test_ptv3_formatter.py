@@ -12,6 +12,7 @@ from ign_lidar.classification_schema import (
     LIDARHD_7CL_IGNORE_INDEX,
     LIDARHD_7CL_NAMES,
 )
+from ign_lidar.core.classification.patch_extractor import extract_patches
 from ign_lidar.io.formatters import Ptv3Formatter
 
 
@@ -202,6 +203,11 @@ class TestWritePatch:
         assert offset.shape == (3,) and offset.dtype == np.float64
         recovered = coord.astype(np.float64) + offset
         assert np.allclose(recovered, patch["points"].astype(np.float64), atol=1e-2)
+        metadata = json.loads((tile_dir / "metadata.json").read_text())
+        assert metadata["coordinate_contract"] == "coord_absolute = coord + offset"
+        assert metadata["crs"] == "EPSG:2154"
+        assert len(metadata["source_bbox"]) == 6
+        assert len(metadata["patch_bbox"]) == 6
 
     def test_pth_layout(self, tmp_path: Path):
         torch = pytest.importorskip("torch")
@@ -213,6 +219,67 @@ class TestWritePatch:
         blob = torch.load(target, weights_only=False)
         assert blob["coord"].shape == (64, 3)
         assert blob["segment"].dtype == torch.int64
+        assert blob["metadata"]["crs"] == "EPSG:2154"
+
+    def test_true_extractor_roundtrip_preserves_lambert93_contract(
+        self, tmp_path: Path
+    ):
+        """Exercise both centerings; a synthetic ideal absolute offset misses this."""
+        absolute_points = np.array(
+            [
+                [650_000.25, 6_860_000.25, 10.0],
+                [650_010.50, 6_860_020.50, 30.0],
+                [650_020.75, 6_860_010.75, 5.0],
+            ],
+            dtype=np.float64,
+        )
+        source_indices = np.arange(len(absolute_points), dtype=np.int64)
+        patches = extract_patches(
+            points=absolute_points,
+            features={},
+            labels=np.array([6, 2, 5], dtype=np.int16),
+            patch_size=50.0,
+            overlap=0.0,
+            min_points=1,
+            source_crs="EPSG:2154",
+            source_indices=source_indices,
+        )
+        assert len(patches) == 1
+        assert not np.allclose(patches[0]["_patch_center"], 0.0)
+
+        patch = {**patches[0], "patch_id": "real_extractor", "tile_id": "tile"}
+        formatter = Ptv3Formatter(feat_keys=())
+        formatted = formatter.format_patch(patch)
+        recovered = (
+            formatted["coord"].astype(np.float64) + formatted["offset"]
+        )
+        assert np.allclose(recovered, absolute_points, atol=1e-4)
+        assert np.allclose(
+            formatted["source_bbox"],
+            np.array(
+                [
+                    650_000.25,
+                    6_860_000.25,
+                    5.0,
+                    650_020.75,
+                    6_860_020.50,
+                    30.0,
+                ]
+            ),
+        )
+
+        tile_dir = formatter.write_patch(formatted, tmp_path)
+        disk_recovered = (
+            np.load(tile_dir / "coord.npy").astype(np.float64)
+            + np.load(tile_dir / "offset.npy")
+        )
+        assert np.allclose(disk_recovered, absolute_points, atol=1e-4)
+        assert np.array_equal(
+            np.load(tile_dir / "source_indices.npy"), source_indices
+        )
+        metadata = json.loads((tile_dir / "metadata.json").read_text())
+        assert metadata["crs"] == "EPSG:2154"
+        assert metadata["has_source_indices"] is True
 
 
 # ---------------------------------------------------------------------------
