@@ -1971,6 +1971,18 @@ class FeatureOrchestrator:
                     f"in {filter_time:.2f}s"
                 )
 
+        # Public feature-name alias: SUPPORTED_FEAT_KEYS (ptv3_formatter.py) and
+        # the feature_modes.py mode definitions all name this feature
+        # "height_above_ground", but this pipeline has always stored it
+        # internally under "height" (see core_features in filter_features()).
+        # Without this alias, Ptv3Formatter._build_feat() never finds
+        # "height_above_ground" in the patch dict and silently zero-fills the
+        # whole column for every point/patch — height above ground is a core
+        # building-vs-vegetation-vs-ground cue, so this was a critical bug for
+        # any PTv3/Pointcept export.
+        if "height" in all_features and "height_above_ground" not in all_features:
+            all_features["height_above_ground"] = all_features["height"]
+
         # Log feature quality metrics for debugging
         self._log_feature_quality(all_features)
 

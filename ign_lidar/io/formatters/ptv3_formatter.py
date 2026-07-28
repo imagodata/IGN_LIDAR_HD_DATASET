@@ -396,11 +396,14 @@ class Ptv3Formatter(BaseFormatter):
             return np.clip(arr / 65535.0, 0.0, 1.0)
         if key in ("return_number", "num_returns"):
             return np.clip(arr / 7.0, 0.0, 1.0)  # spec caps at 7 returns
-        if key == "rgb":
-            return np.clip(arr / 255.0, 0.0, 1.0)
-        if key == "nir":
-            # IGN BD ORTHO IRC delivers NIR as uint8 [0, 255], same scale as RGB.
-            return np.clip(arr / 255.0, 0.0, 1.0)
+        if key in ("rgb", "nir"):
+            # FeatureOrchestrator._add_rgb_features()/_add_nir_features() already
+            # normalize fetched BD ORTHO/IRC values to float32 [0, 1] via
+            # normalize_rgb()/normalize_nir() before they reach the patch dict —
+            # dividing by 255 here again crushed rgb/nir into ~[0, 0.004],
+            # destroying essentially all color/spectral signal. Just clip
+            # defensively, same as the other pre-scaled geometric descriptors.
+            return np.clip(arr, 0.0, 1.0)
         if key == "ndvi":
             # NDVI ∈ [-1, 1] → remap to [0, 1] so spectral channels share scale.
             return np.clip((arr + 1.0) * 0.5, 0.0, 1.0)
