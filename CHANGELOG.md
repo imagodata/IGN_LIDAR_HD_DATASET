@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.7] - 2026-07-28 - Critical fix: height_above_ground zero-filled, RGB/NIR crushed in PTv3 export
+
+### Fixed 🐛
+
+- **`height_above_ground` always zero** (`features/orchestrator.py`): `compute_features()` stores
+  the computed height under the internal key `"height"`, but `SUPPORTED_FEAT_KEYS` / `feat_keys` /
+  `feature_modes.py` all name it `"height_above_ground"`. `Ptv3Formatter._build_feat()` looked up
+  `patch.get("height_above_ground")`, never found it, and silently zero-filled the whole column for
+  every point in every patch (only a DEBUG log, no warning/error) — regardless of
+  `compute_height: true`. Height above ground is a core building/vegetation/ground discriminator;
+  it was effectively absent from every `ptv3_pointcept` export produced by 4.1.1–4.1.6.
+  Fixed with an explicit `all_features["height_above_ground"] = all_features["height"]` alias at
+  the end of `compute_features()`.
+- **RGB/NIR crushed to near-black** (`io/formatters/ptv3_formatter.py`): `_add_rgb_features()` /
+  `_add_nir_features()` already normalize fetched BD ORTHO / IRC values to float32 `[0, 1]` via
+  `normalize_rgb()` / `normalize_nir()` before storing them. `Ptv3Formatter._scale_feat()` divided
+  by `255.0` again, crushing already-normalized values into `~[0, 0.004]` — RGB/NIR reached PTv3 as
+  a near-constant near-black signal, destroying almost all the mineral-vs-vegetation color cue that
+  `use_rgb`/`use_infrared`/`compute_ndvi` were enabled for. `_scale_feat()` now just clips rgb/nir
+  to `[0, 1]`, same treatment as the other pre-scaled geometric descriptors.
+
+### Notes 📝
+
+- Verified with a standalone `Ptv3Formatter.format_patch()` test and with a real end-to-end run
+  (`process` CLI, real BD ORTHO/IRC WFS fetch) on a cropped IGN tile: RGB now spans its full
+  `[0, 1]` range (mean ≈0.40, std ≈0.20) and `height_above_ground` shows real per-point variance
+  (up to ≈24 m) instead of being constant zero. Existing suite (`test_ptv3_formatter.py`,
+  `test_core_height.py`, `test_spectral_rules.py`, `test_orchestrator_facade.py`): 74 passed, 9
+  pre-existing xfailed, 0 regressions.
+- **Anyone who trained a PTv3/Pointcept model on data exported by 4.1.1–4.1.6 with
+  `use_rgb`/`use_infrared`/`compute_height` enabled should re-export and re-train** — the spectral
+  and height channels were not carrying the intended signal.
+
+---
+
 ## [4.1.6] - 2026-07-24 - Safe PTv3 coordinate round-trip
 
 ### Added
