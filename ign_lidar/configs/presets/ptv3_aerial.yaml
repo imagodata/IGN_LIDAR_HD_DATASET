@@ -54,12 +54,13 @@ processor:
 
 # Features required for the default PTv3 feat stack
 features:
+  enable_artifact_filtering: false  # passe destripe inutile (eigen retirées)
   mode: "lod2"
   compute_normals: true       # normals (3) — wall verticality
   compute_curvature: false
   compute_height: true        # height_above_ground — roof vs ground
   compute_geometric: true     # planarity, linearity, verticality (LOD2 building cues)
-  compute_architectural: true # wall_score, roof_score (building-specific)
+  compute_architectural: false # wall_score, roof_score (building-specific)
   use_rgb: true               # fetch BD ORTHO → rgb (mineral vs vegetation)
   use_infrared: true          # fetch IRC → nir (needed for ndvi)
   compute_ndvi: true          # ndvi — kills vegetation false-positives on roofs
@@ -77,9 +78,7 @@ output:
     # Enriched feature stack for LOD2 building segmentation:
     #   spectral (rgb, ndvi) + height + geometry (normals, verticality, planarity)
     #   + building scores (wall/roof). All produced by the features block above.
-    feat_keys: ["rgb", "ndvi", "height_above_ground", "normals",
-                "verticality", "planarity", "wall_score", "roof_score",
-                "return_number"]
+    feat_keys: ["rgb", "ndvi", "height_above_ground", "normals", "return_number"]
     label_schema: "lidar_hd_7cl_contiguous"
     center_xy: true
     anchor_z_min: true
