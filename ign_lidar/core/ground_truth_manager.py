@@ -30,7 +30,11 @@ class GroundTruthManager:
     This class extracts ground truth management from LiDARProcessor to
     improve separation of concerns and testability.
     """
-    
+
+    # Max number of tiles kept in the ground truth cache. Only the current and
+    # the prefetched next tile are ever read back, so a small bound is enough.
+    MAX_CACHED_TILES = 4
+
     def __init__(
         self,
         data_sources_config: Optional[Dict] = None,
@@ -91,9 +95,15 @@ class GroundTruthManager:
             ground_truth_data = fetcher.fetch_for_bbox(bbox)
             
             # Cache it
+            # ⚠️ Bounded: only the in-flight tiles (current + prefetched next)
+            # are ever looked up, but this dict used to keep the ground truth
+            # of every tile of the run alive. A miss is harmless (the caller
+            # gets None and refetches).
             tile_key = laz_file.stem
             self._ground_truth_cache[tile_key] = ground_truth_data
-            
+            while len(self._ground_truth_cache) > self.MAX_CACHED_TILES:
+                self._ground_truth_cache.pop(next(iter(self._ground_truth_cache)))
+
             logger.debug(
                 f"Prefetched ground truth for {laz_file.name}: "
                 f"{len(ground_truth_data.get('buildings', []))} buildings"

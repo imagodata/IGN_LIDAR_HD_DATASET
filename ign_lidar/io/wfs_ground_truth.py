@@ -168,6 +168,36 @@ class WFSMemoryCache:
         logger.info("WFS cache cleared")
 
 
+class BoundedBBoxCache(OrderedDict):
+    """
+    Bounded FIFO dict for the legacy per-bbox layer cache.
+
+    ⚠️ MEMORY LEAK FIX: ``IGNGroundTruthFetcher._cache`` used to be a plain
+    ``dict`` keyed by ``f"{layer}_{bbox}"``. Since every tile has a distinct
+    bbox, a long sequential run kept one GeoDataFrame per layer *and per tile*
+    alive for the whole process: ~10 layers x 200+ tiles of Shapely geometries
+    that were never evicted, which grew until the OOM killer stepped in.
+
+    Only the last few bboxes are ever re-queried (a tile is fetched again by
+    the classification/refinement passes), so a small FIFO bound preserves the
+    hit rate while capping memory. Evicted entries are simply re-fetched.
+
+    Behaves like a ``dict`` so all existing ``in`` / ``[key]`` call sites work
+    unchanged.
+    """
+
+    def __init__(self, maxsize: int = 32):
+        super().__init__()
+        self.maxsize = maxsize
+
+    def __setitem__(self, key, value):
+        if key in self:
+            super().__delitem__(key)
+        super().__setitem__(key, value)
+        while len(self) > self.maxsize:
+            self.popitem(last=False)
+
+
 # ============================================================================
 # IGN WFS Service Configuration
 # ============================================================================
@@ -258,7 +288,9 @@ class IGNGroundTruthFetcher:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = config or IGNWFSConfig()
-        self._cache: Dict[str, Any] = {}
+        # ⚠️ Bounded (was an unbounded dict): one entry per layer *and per
+        # bbox*, so it grew with the number of tiles until OOM on long runs.
+        self._cache: Dict[str, Any] = BoundedBBoxCache(maxsize=32)
         self.verbose = verbose
         
         # ⚡ OPTIMIZED: Phase 4 - WFS Memory Cache for adjacent tiles

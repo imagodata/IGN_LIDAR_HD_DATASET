@@ -923,6 +923,15 @@ class FeatureOrchestrator:
         # ✅ NEW (v3.5.2): Intermediate result cache for normals & eigenvalues
         # Avoids recomputation when multiple features need them
         self._intermediate_cache = {}
+        # ⚠️ Bounded by BYTES, not by entry count: one entry holds a full-tile
+        # normals+eigenvalues copy (~500 MB for a 20M-point tile), so the old
+        # "max 10 entries" bound let several GB pile up for the whole run.
+        self._intermediate_cache_bytes = 0
+        self._intermediate_cache_max_bytes = int(
+            features_cfg.get("intermediate_cache_max_mb", 512) * 1024 * 1024
+        )
+        # Secondary bound, kept from the original implementation
+        self._intermediate_cache_max_entries = 10
         self._cache_hits = 0
         self._cache_misses = 0
 
@@ -1053,13 +1062,32 @@ class FeatureOrchestrator:
         ).hexdigest()
         
         # Store in cache (will be cleared when object is destroyed)
-        self._intermediate_cache[cache_key] = (normals.copy(), eigenvalues.copy())
-        
-        # Limit cache size to prevent memory bloat
-        if len(self._intermediate_cache) > 10:
-            # Remove oldest entry (simple FIFO)
-            self._intermediate_cache.pop(next(iter(self._intermediate_cache)))
-            logger.debug("Intermediate cache size limited (removed oldest entry)")
+        entry = (normals.copy(), eigenvalues.copy())
+        entry_bytes = entry[0].nbytes + entry[1].nbytes
+
+        # Drop a previous value for the same key before re-accounting its size
+        old = self._intermediate_cache.pop(cache_key, None)
+        if old is not None:
+            self._intermediate_cache_bytes -= old[0].nbytes + old[1].nbytes
+
+        self._intermediate_cache[cache_key] = entry
+        self._intermediate_cache_bytes += entry_bytes
+
+        # Limit cache size to prevent memory bloat (FIFO eviction). The byte
+        # budget is what actually caps memory: the previous entry-count bound
+        # alone let 10 full-tile entries (~500 MB each) pile up. The count
+        # bound is kept as a secondary guard. Always keep the entry just added.
+        while len(self._intermediate_cache) > 1 and (
+            self._intermediate_cache_bytes > self._intermediate_cache_max_bytes
+            or len(self._intermediate_cache) > self._intermediate_cache_max_entries
+        ):
+            oldest_key = next(iter(self._intermediate_cache))
+            oldest = self._intermediate_cache.pop(oldest_key)
+            self._intermediate_cache_bytes -= oldest[0].nbytes + oldest[1].nbytes
+            logger.debug(
+                f"Intermediate cache evicted oldest entry "
+                f"(now {self._intermediate_cache_bytes / (1024**2):.0f} MB)"
+            )
 
     def _optimize_parameters_for_data(self, points, classification):
         """
@@ -1188,6 +1216,10 @@ class FeatureOrchestrator:
         """Clear feature cache."""
         self._feature_cache.clear()
         self._current_cache_size = 0
+        # Intermediate normals/eigenvalues are by far the heaviest entries,
+        # so they must be released here too.
+        self._intermediate_cache.clear()
+        self._intermediate_cache_bytes = 0
         logger.info("Feature cache cleared")
 
     def get_performance_summary(self):

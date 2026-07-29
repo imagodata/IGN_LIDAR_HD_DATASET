@@ -1825,51 +1825,55 @@ class LiDARProcessor:
                     else:
                         tiles_processed += 1
 
-                # ✅ OPTIMIZATION: Smart garbage collection (Phase 1 - Quick Win)
-                # Fast cleanup after each tile (generation 0 only - ~5ms)
-                del result
-                if "tile_data" in locals():
-                    del tile_data
-                if "all_features" in locals():
-                    del all_features
-                gc.collect(generation=0)
+                    # ✅ OPTIMIZATION: Smart garbage collection (Phase 1 - Quick Win)
+                    # ⚠️ This block used to sit *outside* the `for` loop (one
+                    # indent level short), so the "per-tile" cleanup actually
+                    # ran a single time, after the very last tile. It is now
+                    # inside the loop, as the comments always claimed.
+                    # Fast cleanup after each tile (generation 0 only - ~5ms)
+                    del result
+                    if "tile_data" in locals():
+                        del tile_data
+                    if "all_features" in locals():
+                        del all_features
+                    gc.collect(generation=0)
 
-                # Deep cleanup every 10 tiles (GPU + full GC)
-                if idx % 10 == 0:
-                    # GPU memory cleanup (if using CuPy)
-                    try:
-                        import cupy as cp
-
-                        mempool = cp.get_default_memory_pool()
-                        pinned_mempool = cp.get_default_pinned_memory_pool()
-                        mempool.free_all_blocks()
-                        pinned_mempool.free_all_blocks()
-                        logger.debug("  🎮 GPU memory freed")
-                    except:
-                        pass
-
-                    # Full CPU garbage collection
-                    gc.collect()
-
-                    # Log memory status
-                    try:
-                        import psutil
-
-                        mem = psutil.virtual_memory()
-                        logger.debug(
-                            f"  💾 System Memory: {mem.available/(1024**3):.1f}GB available"
-                        )
+                    # Deep cleanup every 10 tiles (GPU + full GC)
+                    if idx % 10 == 0:
+                        # GPU memory cleanup (if using CuPy)
                         try:
                             import cupy as cp
 
-                            free_mem, total_mem = cp.cuda.Device().mem_info
-                            logger.debug(
-                                f"  🎮 GPU Memory: {free_mem/(1024**3):.1f}GB / {total_mem/(1024**3):.1f}GB free"
-                            )
+                            mempool = cp.get_default_memory_pool()
+                            pinned_mempool = cp.get_default_pinned_memory_pool()
+                            mempool.free_all_blocks()
+                            pinned_mempool.free_all_blocks()
+                            logger.debug("  🎮 GPU memory freed")
                         except:
                             pass
-                    except ImportError:
-                        pass
+
+                        # Full CPU garbage collection
+                        gc.collect()
+
+                        # Log memory status
+                        try:
+                            import psutil
+
+                            mem = psutil.virtual_memory()
+                            logger.debug(
+                                f"  💾 System Memory: {mem.available/(1024**3):.1f}GB available"
+                            )
+                            try:
+                                import cupy as cp
+
+                                free_mem, total_mem = cp.cuda.Device().mem_info
+                                logger.debug(
+                                    f"  🎮 GPU Memory: {free_mem/(1024**3):.1f}GB / {total_mem/(1024**3):.1f}GB free"
+                                )
+                            except:
+                                pass
+                        except ImportError:
+                            pass
 
         logger.info("")
         logger.info("=" * 70)

@@ -14,7 +14,8 @@ Version: 3.0.0 (Harmonized)
 import time
 import logging
 import threading
-from typing import Dict, List, Optional, Any, Callable
+from typing import Deque, Dict, List, Optional, Any, Callable
+from collections import deque
 from dataclasses import dataclass, field, asdict
 import json
 from pathlib import Path
@@ -67,6 +68,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Max number of monitoring snapshots kept in memory (~1 h at 1 snapshot/s).
+# Keeps the history useful for aggregates without growing for the whole run.
+SNAPSHOT_HISTORY = 3600
+
 
 # ============================================================================
 # Data Classes
@@ -115,7 +120,13 @@ class PerformanceMetrics:
 
     # Stage timings
     stage_timings: Dict[str, float] = field(default_factory=dict)
-    snapshots: List[PerformanceSnapshot] = field(default_factory=list)
+    # ⚠️ Bounded ring buffer (was an unbounded list): the monitoring thread
+    # appends one snapshot per second, so a multi-hour run accumulated tens of
+    # thousands of entries that were never released. Aggregates below are now
+    # computed over the most recent SNAPSHOT_HISTORY entries (~1 h at 1 s).
+    snapshots: Deque[PerformanceSnapshot] = field(
+        default_factory=lambda: deque(maxlen=SNAPSHOT_HISTORY)
+    )
 
     def update_timing(self):
         """Update timing calculations."""
@@ -158,7 +169,12 @@ class PerformanceMetrics:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert metrics to dictionary."""
-        return asdict(self)
+        data = asdict(self)
+        # `snapshots` is a deque, which asdict() deep-copies as-is instead of
+        # recursing into it. Normalize to the historical list-of-dicts shape so
+        # the JSON export stays unchanged.
+        data["snapshots"] = [s.to_dict() for s in self.snapshots]
+        return data
 
 
 # ============================================================================
