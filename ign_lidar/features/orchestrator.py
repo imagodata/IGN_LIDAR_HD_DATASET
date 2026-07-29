@@ -1635,14 +1635,30 @@ class FeatureOrchestrator:
         print("─" * 64)
 
     def _start_parallel_rgb_nir_processing(self, tile_data):
-        """Start parallel RGB/NIR processing."""
+        """Start parallel RGB/NIR processing.
+
+        Only fetches what `_add_rgb_features`/`_add_nir_features` will
+        actually need: those always prefer `tile_data["input_rgb"]`/
+        `["input_nir"]` over a fetch when present, so fetching here too was
+        pure waste — one throwaway WMS orthophoto request per patch whose
+        result (`tile_data["fetched_rgb"]`/`["fetched_nir"]`) was never read.
+        At FRACTAL's scale (16 workers x ~100k patches, RGB/NIR already
+        baked into its LAZ) this was the dominant source of load against
+        IGN's WMS and the likely trigger for the IP-level rate-limit ban
+        that followed (see http_retry.py) — for zero benefit, since the
+        final feature was always the provided input regardless.
+        """
 
         def fetch_rgb_nir():
             """Fetch RGB/NIR data in parallel."""
             results = {}
             points = tile_data["points"]
 
-            if self.use_rgb and self.rgb_fetcher:
+            if (
+                self.use_rgb
+                and self.rgb_fetcher
+                and tile_data.get("input_rgb") is None
+            ):
                 try:
                     rgb_data = self.rgb_fetcher.fetch_for_points(points)
                     results["rgb"] = rgb_data
@@ -1662,7 +1678,11 @@ class FeatureOrchestrator:
                     )
                     logger.warning(str(error))
 
-            if self.use_infrared and self.infrared_fetcher:
+            if (
+                self.use_infrared
+                and self.infrared_fetcher
+                and tile_data.get("input_nir") is None
+            ):
                 try:
                     nir_data = self.infrared_fetcher.fetch_for_points(points)
                     results["nir"] = nir_data
@@ -1911,10 +1931,22 @@ class FeatureOrchestrator:
                 self.infrared_fetcher is not None
             )
 
-            # V5 OPTIMIZATION: Start parallel RGB/NIR processing if available
+            # V5 OPTIMIZATION: Start parallel RGB/NIR processing if available.
+            # Skip entirely when both are already supplied in tile_data —
+            # nothing left to fetch (see _start_parallel_rgb_nir_processing).
             rgb_nir_future = None
+            needs_rgb_fetch = (
+                self.use_rgb
+                and self.rgb_fetcher
+                and tile_data.get("input_rgb") is None
+            )
+            needs_nir_fetch = (
+                self.use_infrared
+                and self.infrared_fetcher
+                and tile_data.get("input_nir") is None
+            )
             if hasattr(self, "_rgb_nir_executor") and (
-                self.use_rgb or self.use_infrared
+                needs_rgb_fetch or needs_nir_fetch
             ):
                 rgb_nir_future = self._start_parallel_rgb_nir_processing(tile_data)
 

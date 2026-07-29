@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.14] - 2026-07-29 - Fix WMS 403 handling and eliminate wasted RGB/NIR fetch
+
+### Fixed 🐛
+
+- **`get_with_retry()` treated HTTP 403 from `data.geopf.fr` as a permanent
+  error** (`utils/http_retry.py`): under sustained load (16 parallel workers,
+  one WMS call per 50×50m patch across a large conversion run), IGN's WMS
+  started returning 403 — an IP-level rate-limit/temporary block, not a real
+  permission failure (confirmed: the same endpoint returned 200 from a
+  different network). The previous behavior fell back to a degraded default
+  (coarse `ground_plane` height instead of DTM) for every subsequent request,
+  silently, for as long as the block lasted. Now 403 retries indefinitely
+  with an escalating backoff (capped at 600s) coordinated across worker
+  processes via a shared state file, instead of giving up.
+- **`FeatureOrchestrator._start_parallel_rgb_nir_processing()` fetched RGB/NIR
+  from WMS even when already supplied**: `_add_rgb_features`/
+  `_add_nir_features` always prefer `tile_data["input_rgb"]`/`["input_nir"]`
+  over a fetch when present, so the fetch result was never used — pure
+  wasted load. For datasets that ship RGB/NIR already baked into their LAZ
+  (e.g. FRACTAL), this was 2 of 3 WMS calls per patch for zero benefit, and
+  the likely trigger of the IP-level block observed above. Now skipped
+  entirely when the input is already supplied.
+
+### Notes 📝
+
+- New `tests/test_http_retry.py`. Full targeted suite (rgb/nir/orchestrator/
+  http_retry/rge_alti): 44 passed.
+
+---
+
 ## [4.1.13] - 2026-07-29 - Fix cascading feature loss writing enriched LAZ with RGB/NIR
 
 ### Fixed 🐛
