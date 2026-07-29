@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.12] - 2026-07-29 - Fix silent DTM data corruption from blank WMS responses
+
+Found by an independent QC pass reloading already-published patches from a live
+FRACTAL run: **88% of patches had `height_above_ground` stuck at a constant
+1.0** (the post-scaling clip ceiling) instead of real per-point values.
+
+### Fixed 🐛
+
+- **Blank/all-nodata WMS responses were silently treated as valid data**
+  (`io/rge_alti_fetcher.py`): under concurrent load (16 parallel workers),
+  IGN's WMS sometimes returns a "successful" HTTP 200 response containing an
+  entirely-nodata GeoTIFF instead of a transport-level error — this doesn't
+  trigger `get_with_retry`'s HTTP-level retry (added in 4.1.10), since the
+  request technically succeeded. `sample_elevation_at_points()` then returned
+  the nodata sentinel (e.g. `-99999.0`) as if it were a real elevation:
+  `height_above_ground = z - (-99999)` produces a huge value that
+  `_scale_feat()` clips to a constant `1.0` — indistinguishable from
+  legitimate data without reloading and inspecting raw values, which is
+  exactly how this was caught. Two fixes, both in `io/rge_alti_fetcher.py`:
+  - `_fetch_from_wms()` now validates the fraction of non-nodata pixels in
+    each response; a blank/mostly-blank response is retried on the same
+    layer up to 3 times (confirmed transient and recoverable on retry under
+    load) before falling through to the next layer.
+  - `sample_elevation_at_points()` now returns `None` (instead of the
+    nodata-filled array) if any point remains unresolved after nearest-
+    neighbor interpolation, so `compute_height_above_ground()` propagates a
+    clean failure and the caller falls back to `ground_plane` — never a
+    bogus elevation.
+
+### Notes 📝
+
+- New `tests/test_rge_alti_fetcher.py` (4 tests): all-nodata grid → `None`
+  end-to-end, valid/partially-invalid grids unaffected, blank-then-valid WMS
+  response recovers real data via retry, persistently-blank response falls
+  through to `None` cleanly. Full suite: 48 passed.
+- This is the second data-correctness bug found live in the same FRACTAL run
+  (after the `dtm_offset` bbox bug in 4.1.11) — both were invisible to the
+  conversion script's own self-reported per-patch ranges (which stayed within
+  `[0, 1]`, just at a suspicious constant) and only surfaced by independently
+  reloading published patches and checking per-patch variance, not just
+  global min/max. Recommend the same check for any `height_method='dtm'` data
+  produced by 4.1.9-4.1.11.
+
+---
+
 ## [4.1.11] - 2026-07-29 - Fix numba threading crash + DTM height on recentered patches
 
 Both bugs below were caught live running a full FRACTAL dataset conversion

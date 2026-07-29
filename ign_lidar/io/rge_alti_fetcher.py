@@ -344,6 +344,21 @@ class RGEALTIFetcher:
             else:
                 logger.warning("No valid DTM points available for interpolation")
 
+        # Any point still at the nodata sentinel (no valid DTM pixel within
+        # interpolation range) must NOT be returned as if it were a real
+        # elevation — height_above_ground = z - (-9999) silently produces a
+        # huge bogus value (previously clipped to a constant during feature
+        # scaling, indistinguishable from real data without inspecting raw
+        # values). Fail loudly instead so the caller falls back to
+        # 'ground_plane' for this patch.
+        still_invalid = elevations == nodata
+        if still_invalid.any():
+            logger.warning(
+                f"{still_invalid.sum()}/{len(elevations)} points still at nodata "
+                f"after interpolation - treating as fetch failure"
+            )
+            return None
+
         return elevations
 
     def compute_height_above_ground(
@@ -649,7 +664,18 @@ class RGEALTIFetcher:
                 (self.LAYER_LIDAR_HD_MNT, "LiDAR HD MNT (fallback)"),
             ]
 
-        # Try each layer in order
+        # Try each layer in order. Under concurrent load, IGN's WMS has been
+        # observed to return a "successful" (HTTP 200) response containing a
+        # blank/all-nodata GeoTIFF instead of a transport-level error — this
+        # doesn't trigger get_with_retry's HTTP-level retry, so without this
+        # content check it silently produced height_above_ground computed
+        # from a bogus nodata elevation (e.g. clipped to a constant 1.0 after
+        # scaling) instead of falling back to 'ground_plane'. Retry a blank
+        # response a few times (transient under load, confirmed recoverable
+        # on retry) before moving to the next layer/giving up.
+        blank_min_valid_fraction = 0.05
+        max_content_attempts = 3
+
         for layer_name, layer_desc in layers_to_try:
             params = {
                 "SERVICE": "WMS",
@@ -664,58 +690,79 @@ class RGEALTIFetcher:
                 "CRS": crs,
             }
 
-            try:
-                logger.info(
-                    f"Fetching DTM from IGN WMS ({layer_desc}): {bbox} ({width}x{height})"
-                )
-                from ..utils.http_retry import get_with_retry
-                response = get_with_retry(
-                    self.WMS_ENDPOINT, params, timeout=60,
-                    operation_name=f"DTM fetch ({layer_desc})",
-                )
-
-                # Check if we got an error message instead of image
-                content_type = response.headers.get("Content-Type", "")
-                if "xml" in content_type or "text" in content_type:
-                    error_text = response.text[:500]
-                    logger.warning(f"WMS returned error for {layer_desc}: {error_text}")
-                    continue  # Try next layer
-
-                # Save to temporary file and read with rasterio
-                import tempfile
-
-                with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
-                    tmp.write(response.content)
-                    tmp_path = tmp.name
-
+            for content_attempt in range(max_content_attempts):
                 try:
-                    with rasterio.open(tmp_path) as src:
-                        grid = src.read(1)
+                    logger.info(
+                        f"Fetching DTM from IGN WMS ({layer_desc}): {bbox} ({width}x{height})"
+                    )
+                    from ..utils.http_retry import get_with_retry
+                    response = get_with_retry(
+                        self.WMS_ENDPOINT, params, timeout=60,
+                        operation_name=f"DTM fetch ({layer_desc})",
+                    )
 
-                        # Create proper geotransform
-                        from rasterio.transform import from_bounds as create_transform
+                    # Check if we got an error message instead of image
+                    content_type = response.headers.get("Content-Type", "")
+                    if "xml" in content_type or "text" in content_type:
+                        error_text = response.text[:500]
+                        logger.warning(f"WMS returned error for {layer_desc}: {error_text}")
+                        break  # Not content-retryable — try next layer
 
-                        transform = create_transform(
-                            minx, miny, maxx, maxy, width, height
+                    # Save to temporary file and read with rasterio
+                    import tempfile
+
+                    with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
+                        tmp.write(response.content)
+                        tmp_path = tmp.name
+
+                    try:
+                        with rasterio.open(tmp_path) as src:
+                            grid = src.read(1)
+                            nodata = src.nodata if src.nodata is not None else -9999.0
+
+                            valid_fraction = float(np.mean(grid != nodata))
+                            if valid_fraction < blank_min_valid_fraction:
+                                if content_attempt < max_content_attempts - 1:
+                                    logger.warning(
+                                        f"{layer_desc}: blank/all-nodata response "
+                                        f"({valid_fraction * 100:.1f}% valid) — "
+                                        f"retrying ({content_attempt + 1}/"
+                                        f"{max_content_attempts})"
+                                    )
+                                    continue  # retry same layer
+                                logger.warning(
+                                    f"{layer_desc}: still blank after "
+                                    f"{max_content_attempts} attempts — "
+                                    f"trying next layer"
+                                )
+                                break  # give up on this layer
+
+                            # Create proper geotransform
+                            from rasterio.transform import from_bounds as create_transform
+
+                            transform = create_transform(
+                                minx, miny, maxx, maxy, width, height
+                            )
+
+                            metadata = {
+                                "transform": transform,
+                                "crs": crs,
+                                "resolution": (self.resolution, self.resolution),
+                                "bounds": bbox,
+                                "nodata": nodata,
+                                "source": layer_desc,  # Track which layer was used
+                            }
+                        logger.info(
+                            f"✅ Successfully fetched DTM using {layer_desc} "
+                            f"({valid_fraction * 100:.1f}% valid)"
                         )
+                        return grid, metadata
+                    finally:
+                        Path(tmp_path).unlink(missing_ok=True)
 
-                        metadata = {
-                            "transform": transform,
-                            "crs": crs,
-                            "resolution": (self.resolution, self.resolution),
-                            "bounds": bbox,
-                            "nodata": src.nodata if src.nodata is not None else -9999.0,
-                            "source": layer_desc,  # Track which layer was used
-                        }
-                    logger.info(f"✅ Successfully fetched DTM using {layer_desc}")
-                    return grid, metadata
-                finally:
-                    Path(tmp_path).unlink(missing_ok=True)
-
-            except Exception as e:
-                logger.warning(f"WMS fetch failed for {layer_desc}: {e}")
-                # Continue to next layer instead of returning None immediately
-                continue
+                except Exception as e:
+                    logger.warning(f"WMS fetch failed for {layer_desc}: {e}")
+                    break  # Not content-retryable — try next layer
 
         # All layers failed
         logger.error(f"Failed to fetch DTM from all WMS layers for bbox {bbox}")

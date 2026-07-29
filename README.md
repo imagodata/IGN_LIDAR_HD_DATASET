@@ -74,6 +74,18 @@ A comprehensive Python library for processing French IGN LiDAR HD data into mach
 
 ## ✨ What's New
 
+### 🐛 **Fix silent DTM data corruption from blank WMS responses (v4.1.12 - July 2026)**
+
+Found by an independent QC pass on a live FRACTAL run: **88% of patches had `height_above_ground`
+stuck at a constant `1.0`** instead of real values. Under concurrent load, IGN's WMS sometimes
+returns a "successful" (HTTP 200) but blank/all-nodata GeoTIFF — this doesn't trigger the 4.1.10
+retry (which only fires on HTTP errors), so the nodata sentinel was silently used as if it were a
+real elevation. `_fetch_from_wms()` now validates response content and retries blank responses;
+`sample_elevation_at_points()` now returns `None` instead of a nodata-filled array, so the caller
+correctly falls back to `ground_plane` instead of producing a bogus height. **If you generated any
+`height_method='dtm'` data with 4.1.9-4.1.11, re-check `height_above_ground` per-patch variance —
+don't trust the global min/max alone, a saturated-constant patch stays inside `[0, 1]`.**
+
 ### 🐛 **Fix numba threading crash + DTM height on recentered patches (v4.1.11 - July 2026)**
 
 Both caught live running a full FRACTAL dataset conversion (100k patches) at scale:

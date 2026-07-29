@@ -40,7 +40,7 @@ Version 3.4.0 - GPU Optimizations & Road Classification:
 All features now work with the new configuration architecture.
 """
 
-__version__ = "4.1.11"
+__version__ = "4.1.12"
 __author__ = "imagodata"
 __email__ = "simon.ducournau@gmail.com"
 
