@@ -74,6 +74,15 @@ A comprehensive Python library for processing French IGN LiDAR HD data into mach
 
 ## ✨ What's New
 
+### 🐛 **Fix cascading feature loss writing enriched LAZ with RGB/NIR (v4.1.13 - July 2026)**
+
+`save_enriched_tile_laz()`: a `features` dict from `FeatureOrchestrator` commonly includes
+`red`/`green`/`blue`/`nir` keys. When RGB/NIR are also passed via `input_rgb`/`input_nir` (point
+format 7/8), those keys collided with native LAS dimensions — `add_extra_dim()` raised on the
+colliding key **and silently broke every subsequent feature** (`ndvi`, `height_above_ground`,
+`is_ground`, ...) for the rest of that call. Now skips any `features` key that's already a native
+dimension before attempting to add it.
+
 ### 🐛 **Fix silent DTM data corruption from blank WMS responses (v4.1.12 - July 2026)**
 
 Found by an independent QC pass on a live FRACTAL run: **88% of patches had `height_above_ground`

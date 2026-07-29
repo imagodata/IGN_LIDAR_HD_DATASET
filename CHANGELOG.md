@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.13] - 2026-07-29 - Fix cascading feature loss writing enriched LAZ with RGB/NIR
+
+### Fixed 🐛
+
+- **A single `features` dict key colliding with a native LAS dimension silently
+  dropped nearly every other feature from enriched LAZ output**
+  (`core/classification/io/serializers.py::save_enriched_tile_laz()`): a
+  `features` dict from `FeatureOrchestrator.compute_features()` commonly
+  includes `'red'/'green'/'blue'/'nir'` alongside geometric features. When
+  RGB/NIR are also supplied via `input_rgb`/`input_nir` (point format 7/8),
+  those keys collide with the point format's *native* dimensions —
+  `las.add_extra_dim()` raises `"field '<name>' occurs more than once"` for
+  the colliding key, **and leaves the LasData point record in a state where
+  every subsequent `add_extra_dim()` call also fails**, regardless of name.
+  One colliding key (e.g. `'nir'`) silently dropped `ndvi`,
+  `height_above_ground`, `is_ground`, and any other feature that happened to
+  be iterated afterward — with only a per-feature `logger.warning`, easy to
+  miss across a large batch. Fixed by skipping any `features` key that's
+  already a native dimension of the chosen point format *before* attempting
+  to add it, rather than attempting and catching the exception after the
+  damage is done.
+
+### Notes 📝
+
+- New `tests/test_enriched_laz_native_collision.py`: reproduces the exact
+  collision (`red`/`green`/`blue`/`nir` keys + `input_rgb`/`input_nir`) and
+  asserts every other feature still lands in the output. Full suite: 49
+  passed.
+
+---
+
 ## [4.1.12] - 2026-07-29 - Fix silent DTM data corruption from blank WMS responses
 
 Found by an independent QC pass reloading already-published patches from a live

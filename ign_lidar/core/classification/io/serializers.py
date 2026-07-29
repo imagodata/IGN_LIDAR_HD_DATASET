@@ -672,10 +672,28 @@ def save_enriched_tile_laz(
     logger.debug(f"  Feature names: {list(features.keys())[:20]}...")  # First 20
     logger.debug(f"  Pre-existing extra dimensions: {sorted(added_dimensions)}")
 
+    # Native dimensions of the chosen point format (x, y, z, intensity, red,
+    # green, blue, nir, ...) — calling add_extra_dim() with a name that
+    # collides with one of these raises "field '<name>' occurs more than
+    # once" AND leaves the LasData's point record in a state where every
+    # subsequent add_extra_dim() call also fails, regardless of name. A
+    # `features` dict coming straight from FeatureOrchestrator commonly
+    # includes 'red'/'green'/'blue'/'nir' alongside the geometric features,
+    # so this must be checked before attempting to add anything, not just
+    # caught after the fact.
+    native_dimension_names = set(las.point_format.dimension_names)
+
     for feat_name, feat_data in features.items():
         if feat_name in ["points", "classification", "intensity", "return_number"]:
             logger.debug(f"  Skipping standard field: {feat_name}")
             continue  # Skip standard fields already set
+
+        if feat_name in native_dimension_names:
+            logger.debug(
+                f"  Skipping '{feat_name}': already a native LAS dimension "
+                f"for this point format"
+            )
+            continue
 
         if feat_name in added_dimensions:
             logger.debug(f"  Skipping duplicate: {feat_name}")
