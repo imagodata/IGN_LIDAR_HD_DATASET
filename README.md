@@ -74,6 +74,21 @@ A comprehensive Python library for processing French IGN LiDAR HD data into mach
 
 ## ✨ What's New
 
+### 🐛 **Fix numba threading crash + DTM height on recentered patches (v4.1.11 - July 2026)**
+
+Both caught live running a full FRACTAL dataset conversion (100k patches) at scale:
+
+- **Every feature computation crashed on environments without TBB/OpenMP** — numba's threading
+  layer was hardcoded to `"threadsafe"` with no fallback, so any environment missing those system
+  libraries (observed: a bare Ubuntu cloud image) failed **100% of patches** with
+  `ValueError: No threading layer could be loaded`. Now probes and falls back to `workqueue`
+  automatically.
+- **`height_method='dtm'` queried a bogus bbox near `(0, 0)`** for callers passing already-recentered
+  points (e.g. `coord_absolute = coord + offset` patch formats). New optional `dtm_offset` parameter
+  (threaded through `compute_features()` → `dtm_offset` key in `tile_data`) shifts points back to
+  absolute before DTM sampling. `None` (default) is a no-op for callers already using absolute
+  coordinates.
+
 ### 🐛 **Multiprocessing fix + DTM-based height + resilient WMS fetching (v4.1.9-4.1.10 - July 2026)**
 
 - **Fixed `num_workers>1` crash** (`TypeError: cannot pickle '_thread.lock'`) — broken since

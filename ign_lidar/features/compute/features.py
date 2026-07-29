@@ -26,6 +26,45 @@ try:
 
     NUMBA_AVAILABLE = True
     config.THREADING_LAYER = "threadsafe"
+
+    def _ensure_working_threading_layer() -> None:
+        """`threadsafe` (tbb/omp) is preferred so numba-jitted parallel code
+        stays safe to call from multiple OS threads in the same process
+        (e.g. the orchestrator's RGB/NIR `ThreadPoolExecutor` prefetching
+        running alongside feature computation). Not every environment ships
+        the tbb/openmp system libraries though (observed: a bare Ubuntu
+        26.04 cloud image with no conda) — numba then raises `ValueError`
+        on the *first* parallel dispatch instead of degrading gracefully,
+        which previously broke every single call, not just the unsafe
+        concurrent-thread case. Probe once at import time (before any real
+        work) and fall back to `workqueue` — not thread-safe for concurrent
+        multi-threaded numba calls, but correct for the common case of a
+        single caller per process (e.g. one worker in a
+        `multiprocessing.Pool`).
+        """
+        probe_input = np.zeros(4, dtype=np.float64)
+
+        @jit(nopython=True, parallel=True)
+        def _probe(x):
+            out = np.zeros_like(x)
+            for i in prange(len(x)):
+                out[i] = x[i]
+            return out
+
+        try:
+            _probe(probe_input)
+        except ValueError:
+            logger.warning(
+                "Numba 'threadsafe' threading layer (tbb/omp) unavailable in "
+                "this environment - falling back to 'workqueue'. Parallel "
+                "feature computation still works; calling numba-jitted code "
+                "concurrently from multiple threads in the same process is "
+                "no longer guaranteed safe."
+            )
+            config.THREADING_LAYER = "workqueue"
+            _probe(probe_input)  # raises again if even workqueue is broken
+
+    _ensure_working_threading_layer()
 except ImportError:
     NUMBA_AVAILABLE = False
     logger.warning("Numba not available - using slow fallback implementation")

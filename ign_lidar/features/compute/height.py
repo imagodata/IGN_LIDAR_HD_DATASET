@@ -21,6 +21,7 @@ def compute_height_above_ground(
     ground_class: int = 2,
     dtm_fetcher: Optional[Any] = None,
     crs: str = "EPSG:2154",
+    dtm_offset: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Compute height above ground for each point.
@@ -49,6 +50,16 @@ def compute_height_above_ground(
     crs : str, optional
         Coordinate reference system of `points` (default: "EPSG:2154",
         Lambert-93). Only used when method='dtm'.
+    dtm_offset : np.ndarray, optional
+        (3,) offset added to `points` before DTM bbox derivation/sampling
+        only (method='dtm'). Height above ground is a physical quantity
+        (z_absolute - ground_elevation) independent of any coordinate
+        convention, so callers that pass already-recentered/local `points`
+        (e.g. `coord_absolute = coord + offset`, as produced by patch
+        formatters) must supply that same `offset` here — otherwise the DTM
+        fetch queries a bogus bbox near the coordinate origin instead of the
+        real patch location. None (default) assumes `points` are already
+        absolute Lambert-93 coordinates (unchanged behavior).
 
     Returns
     -------
@@ -120,7 +131,14 @@ def compute_height_above_ground(
             from ...io.rge_alti_fetcher import RGEALTIFetcher
             dtm_fetcher = RGEALTIFetcher()
 
-        dtm_ground_z = dtm_fetcher.compute_height_above_ground(points, crs=crs)
+        # Height above ground is a physical quantity (z_absolute - DTM
+        # elevation) — the DTM fetcher needs absolute Lambert-93 coordinates
+        # for both bbox derivation and per-point raster sampling, so shift
+        # already-recentered `points` back to absolute here if an offset was
+        # supplied (see dtm_offset docstring above).
+        dtm_points = points if dtm_offset is None else points + dtm_offset
+
+        dtm_ground_z = dtm_fetcher.compute_height_above_ground(dtm_points, crs=crs)
         if dtm_ground_z is None:
             logger.warning(
                 "DTM height computation failed (fetch/read error) — "

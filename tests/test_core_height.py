@@ -139,6 +139,38 @@ class TestComputeHeightAboveGround:
         )
         expected = compute_height_above_ground(points, classification, method='ground_plane')
         np.testing.assert_allclose(height, expected)
+
+    def test_dtm_offset_shifts_points_before_fetch(self):
+        """dtm_offset must reach the fetcher as absolute coords, and the
+        returned height must reflect the absolute Z, not the local one
+        (recentered patches, e.g. FRACTAL's coord_absolute = coord + offset).
+        """
+        # Patch-local coordinates: small, centered near zero.
+        local_points = np.array([
+            [0.0, 0.0, 2.0],
+            [1.0, 1.0, 0.0],
+        ], dtype=np.float32)
+        classification = np.array([6, 2])
+        offset = np.array([650000.0, 6860000.0, 100.0])
+
+        seen = {}
+
+        class RecordingDTMFetcher:
+            def compute_height_above_ground(self, points, dtm_data=None, bbox=None, crs="EPSG:2154"):
+                seen["points"] = points.copy()
+                # Flat terrain at absolute elevation 95m.
+                return points[:, 2] - 95.0
+
+        height = compute_height_above_ground(
+            local_points, classification, method='dtm',
+            dtm_fetcher=RecordingDTMFetcher(), dtm_offset=offset,
+        )
+        # Fetcher must have seen absolute coordinates (local + offset).
+        np.testing.assert_allclose(seen["points"][:, 0], [650000.0, 650001.0])
+        np.testing.assert_allclose(seen["points"][:, 1], [6860000.0, 6860001.0])
+        np.testing.assert_allclose(seen["points"][:, 2], [102.0, 100.0])
+        # Height = absolute_z - 95 = (local_z + 100) - 95 = local_z + 5.
+        np.testing.assert_allclose(height, [7.0, 5.0])
     
     def test_invalid_method(self):
         """Test that invalid method raises ValueError."""

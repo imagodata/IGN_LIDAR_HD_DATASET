@@ -232,6 +232,7 @@ class CPUStrategy(BaseFeatureStrategy):
                 method="dtm",
                 dtm_fetcher=kwargs.get("dtm_fetcher"),
                 crs=kwargs.get("dtm_crs", "EPSG:2154"),
+                dtm_offset=kwargs.get("dtm_offset"),
             )
         elif classification is not None:
             # Compute height above ground (unchanged default behavior)

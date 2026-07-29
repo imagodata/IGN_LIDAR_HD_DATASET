@@ -1926,6 +1926,13 @@ class FeatureOrchestrator:
                     optimized_params,
                     has_rgb=has_rgb,
                     has_nir=has_nir,
+                    # Per-call absolute (x,y,z) offset to add to `points`
+                    # before DTM sampling (height_method='dtm'), for callers
+                    # that pass already-recentered patch-local coordinates
+                    # (e.g. `coord_absolute = coord + offset` — see
+                    # FRACTAL conversion). None (default) assumes `points`
+                    # are already absolute Lambert-93, unchanged behavior.
+                    dtm_offset=tile_data.get("dtm_offset"),
                 )
             )
 
@@ -2140,6 +2147,7 @@ class FeatureOrchestrator:
         classification: np.ndarray,
         has_rgb: bool = False,
         has_nir: bool = False,
+        dtm_offset: Optional[np.ndarray] = None,
     ) -> tuple:
         """
         Compute geometric features using selected strategy.
@@ -2149,6 +2157,9 @@ class FeatureOrchestrator:
             classification: (N,) classification codes
             has_rgb: Whether RGB data is available
             has_nir: Whether NIR data is available
+            dtm_offset: (3,) offset to add to `points` before DTM sampling
+                only (height_method='dtm'), for callers passing already
+                recentered/local coordinates. None = `points` are absolute.
 
         Returns:
             Tuple of (normals, curvature, height, geo_features_dict)
@@ -2345,6 +2356,7 @@ class FeatureOrchestrator:
                 "radius": search_radius,
                 "height_method": self.height_method,
                 "dtm_fetcher": self.dtm_fetcher,
+                "dtm_offset": dtm_offset,
             }
             
             # Add cached intermediates if available

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.11] - 2026-07-29 - Fix numba threading crash + DTM height on recentered patches
+
+Both bugs below were caught live running a full FRACTAL dataset conversion
+(100k patches) on a fresh cloud VM — surfaced within minutes at full scale,
+neither had test coverage before.
+
+### Fixed 🐛
+
+- **Every single feature computation crashed on environments without TBB/OpenMP**
+  (`features/compute/features.py`): `config.THREADING_LAYER = "threadsafe"` was set
+  unconditionally at import time with no fallback. On any environment lacking the
+  `tbb`/`libomp` system libraries (observed: a bare Ubuntu 26.04 cloud image, no
+  conda), numba raises `ValueError: No threading layer could be loaded` on the
+  *first* parallel-JIT dispatch — which, since this module is imported by every
+  feature-computation path, meant **100% of patches failed** with no feature
+  computed at all. Added `_ensure_working_threading_layer()`: probes with a
+  trivial JIT call at import time and falls back to `workqueue` (not thread-safe
+  for concurrent multi-threaded numba calls, but correct for the common
+  one-caller-per-process case, e.g. a `multiprocessing.Pool` worker) instead of
+  hard-crashing every call.
+- **`height_method='dtm'` queried a bogus bbox near the coordinate origin for
+  any caller passing already-recentered points** (`features/compute/height.py`,
+  `features/orchestrator.py`, `features/strategy_cpu.py`): height above ground
+  is a physical quantity (`z_absolute - DTM_elevation`), but the DTM fetcher
+  needs *absolute* Lambert-93 coordinates for both bbox derivation and raster
+  sampling. Callers that recenter points before calling
+  `FeatureOrchestrator.compute_features()` (e.g. `coord_absolute = coord +
+  offset`, as produced by patch formatters — the homemade pipeline processes
+  whole un-centered tiles and never hit this) were silently querying IGN's WMS
+  with a ~50x50m bbox near `(0, 0)` instead of the real patch location, which
+  IGN correctly rejects with `400 Bad Request` (no retry — see 4.1.10 — since
+  400 isn't transient) and silently falls back to `ground_plane`. Added an
+  optional `dtm_offset` parameter threaded through
+  `compute_height_above_ground()` → `CPUStrategy.compute()` →
+  `FeatureOrchestrator._compute_geometric_features()` → `compute_features()`
+  (read per-call from `tile_data["dtm_offset"]`, not fixed at orchestrator
+  construction time, since the offset differs per patch): shifts points back
+  to absolute before DTM sampling only. `None` (default) preserves current
+  behavior for callers already passing absolute coordinates.
+- A shard/tile where **100% of items failed** was still marked "done" by the
+  FRACTAL conversion script (no correctness impact on the published package —
+  fix is in the calling script, not `ign_lidar_hd` itself — but worth noting:
+  a systemic failure like the one above would otherwise be silently
+  unrecoverable, since the resumability logic would skip the "already done"
+  shard forever).
+
+### Notes 📝
+
+- Verified on the actual VM that hit the numba crash: before the fix, 0/30
+  patches converted; after, 30/30, with correct feature ranges. `dtm_offset`
+  verified with recentered coordinates matching FRACTAL's exact convention —
+  DTM fetch now queries the real absolute bbox instead of one near `(0, 0)`.
+  New unit test `test_dtm_offset_shifts_points_before_fetch`
+  (`test_core_height.py`, 25 passed). No dedicated automated test for the
+  numba fallback (inherently environment-dependent — probed live instead).
+
+---
+
 ## [4.1.10] - 2026-07-29 - Resilient WMS fetching (retry with backoff)
 
 ### Fixed 🐛
