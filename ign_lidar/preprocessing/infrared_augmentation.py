@@ -125,12 +125,10 @@ class IGNInfraredFetcher:
         
         try:
             logger.debug(f"Fetching infrared orthophoto for bbox {bbox}")
-            response = requests.get(
-                self.WMS_URL,
-                params=params,
-                timeout=30
+            from ..utils.http_retry import get_with_retry
+            response = get_with_retry(
+                self.WMS_URL, params, timeout=30, operation_name="NIR orthophoto fetch",
             )
-            response.raise_for_status()
             
             # Load image
             img = Image.open(BytesIO(response.content))

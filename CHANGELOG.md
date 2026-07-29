@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.10] - 2026-07-29 - Resilient WMS fetching (retry with backoff)
+
+### Fixed 🐛
+
+- **Transient WMS errors (429/500/502/503/504) silently degraded data instead of retrying**:
+  `IGNOrthophotoFetcher.fetch_orthophoto()` (RGB), `IGNInfraredFetcher.fetch_infrared_orthophoto()`
+  (NIR) and `RGEALTIFetcher._fetch_from_wms()` (DTM, see 4.1.9) each treated any failed
+  `requests.get()` as permanent: RGB/NIR fell back to a flat gray/128 default color, DTM fell back
+  to `ground_plane`. On a workload doing one WMS call per (small) patch across tens of thousands
+  of patches — rather than one per large tile, which amortizes better — a non-trivial fraction of
+  transient 502s (observed in practice against `data.geopf.fr` under concurrent load) degraded
+  real data for no permanent reason. Added `ign_lidar/utils/http_retry.py::get_with_retry()`:
+  exponential backoff + jitter, retries connection errors/timeouts and the 5 retryable status
+  codes above, does **not** retry other 4xx (400/404/...) since those indicate a bad
+  request/layer/params, not a transient hiccup. Wired into all three fetchers.
+
+### Notes 📝
+
+- Verified with a mocked `requests.get`: a 502-502-200 sequence retries and succeeds; a plain 400
+  raises immediately with zero retries. Existing suite unaffected (no test coverage previously
+  existed for these three fetchers).
+
+---
+
 ## [4.1.9] - 2026-07-29 - Fix num_workers>1 pickling crash, add DTM-based height option
 
 ### Fixed 🐛

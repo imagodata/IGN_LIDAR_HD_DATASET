@@ -668,8 +668,11 @@ class RGEALTIFetcher:
                 logger.info(
                     f"Fetching DTM from IGN WMS ({layer_desc}): {bbox} ({width}x{height})"
                 )
-                response = requests.get(self.WMS_ENDPOINT, params=params, timeout=60)
-                response.raise_for_status()
+                from ..utils.http_retry import get_with_retry
+                response = get_with_retry(
+                    self.WMS_ENDPOINT, params, timeout=60,
+                    operation_name=f"DTM fetch ({layer_desc})",
+                )
 
                 # Check if we got an error message instead of image
                 content_type = response.headers.get("Content-Type", "")

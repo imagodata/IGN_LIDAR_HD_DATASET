@@ -74,6 +74,30 @@ A comprehensive Python library for processing French IGN LiDAR HD data into mach
 
 ## ✨ What's New
 
+### 🐛 **Multiprocessing fix + DTM-based height + resilient WMS fetching (v4.1.9-4.1.10 - July 2026)**
+
+- **Fixed `num_workers>1` crash** (`TypeError: cannot pickle '_thread.lock'`) — broken since
+  v4.1.2. The WFS rate limiter's internal locks are now dropped/recreated around pickling, so
+  parallel tile processing works again.
+- **`features.height_method='dtm'`** — `height_above_ground` can be computed per-point from IGN's
+  RGE ALTI®/LiDAR HD MNT digital terrain model instead of the default per-tile/patch `ground_plane`
+  scalar (more accurate on sloped/mountainous terrain). Default behavior unchanged.
+
+  ```python
+  config = {
+      "features": {
+          "height_method": "dtm",       # default: "ground_plane"
+          "dtm_cache_dir": "cache/dtm", # optional, persists across runs
+      },
+  }
+  ```
+
+- **Retry with exponential backoff on transient WMS errors** (429/500/502/503/504) for the RGB
+  orthophoto, NIR/infrared orthophoto, and RGE ALTI/DTM fetchers — previously a single transient
+  502 from `data.geopf.fr` silently degraded a point/patch to a default gray color or the
+  `ground_plane` fallback with only a log line to show for it. Non-transient errors (400, 404, ...)
+  still fail immediately.
+
 ### 🚀 **Phase 4: Production Optimization Suite (v3.9.0 - November 2025)**
 
 **NEW:** Complete optimization ecosystem delivering **+66-94% performance** (2.66× - 2.94× faster)!
