@@ -130,6 +130,18 @@ class FeaturesConfig:
         use_rgb: Include RGB from IGN orthophotos
         use_infrared: Include near-infrared from IRC
         compute_ndvi: Compute NDVI vegetation index
+        height_method: How height_above_ground is computed — 'ground_plane'
+            (default, min Z of classified ground points per tile/patch),
+            'min_z' (global min Z), or 'dtm' (per-point ground elevation
+            sampled from IGN RGE ALTI®/LiDAR HD MNT — more accurate on
+            sloped/mountainous terrain). Only 'ground_plane' and 'dtm' are
+            wired into the CPU Strategy Pattern path today.
+        dtm_cache_dir: Cache directory for downloaded DTM tiles
+            (height_method='dtm'). Defaults to a temp dir if unset.
+        dtm_local_dir: Directory of pre-downloaded DTM GeoTIFFs to prefer
+            over network fetch (height_method='dtm').
+        dtm_prefer_lidar_hd: Prefer the 1m LiDAR HD MNT layer over RGE ALTI
+            (height_method='dtm', default: True).
         sampling_method: Point sampling strategy
         normalize_xyz: Normalize XYZ coordinates to [-1, 1]
         normalize_features: Standardize features (z-score)
@@ -162,6 +174,12 @@ class FeaturesConfig:
     use_rgb: bool = False
     use_infrared: bool = False
     compute_ndvi: bool = False
+
+    # Height above ground computation (see docstring above)
+    height_method: Literal["ground_plane", "min_z", "dtm"] = "ground_plane"
+    dtm_cache_dir: Optional[str] = None
+    dtm_local_dir: Optional[str] = None
+    dtm_prefer_lidar_hd: bool = True
 
     # PointNet++ specific optimizations
     sampling_method: Literal["random", "fps", "grid"] = "random"

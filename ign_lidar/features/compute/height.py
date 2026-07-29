@@ -8,7 +8,7 @@ This module provides height computation replacing duplicates in:
 """
 
 import numpy as np
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,9 @@ def compute_height_above_ground(
     points: np.ndarray,
     classification: np.ndarray,
     method: Literal['ground_plane', 'min_z', 'dtm'] = 'ground_plane',
-    ground_class: int = 2
+    ground_class: int = 2,
+    dtm_fetcher: Optional[Any] = None,
+    crs: str = "EPSG:2154",
 ) -> np.ndarray:
     """
     Compute height above ground for each point.
@@ -40,7 +42,14 @@ def compute_height_above_ground(
         (default: 'ground_plane')
     ground_class : int, optional
         ASPRS classification code for ground points (default: 2)
-        
+    dtm_fetcher : RGEALTIFetcher, optional
+        Pre-instantiated DTM fetcher to reuse across tiles (avoids re-opening
+        the cache/local files per call). Only used when method='dtm'. If None,
+        a default RGEALTIFetcher() is created on the fly.
+    crs : str, optional
+        Coordinate reference system of `points` (default: "EPSG:2154",
+        Lambert-93). Only used when method='dtm'.
+
     Returns
     -------
     height : np.ndarray
@@ -73,8 +82,14 @@ def compute_height_above_ground(
     - **min_z**: Uses global minimum Z as ground reference.
       Simpler but may be inaccurate if scene has varying terrain.
       
-    - **dtm**: Reserved for future Digital Terrain Model integration.
-      Will use interpolated ground surface from DTM.
+    - **dtm**: Uses an interpolated ground surface sampled from IGN's
+      RGE ALTI®/LiDAR HD MNT digital terrain model (via `RGEALTIFetcher`,
+      see `ign_lidar.io.rge_alti_fetcher`), instead of a single per-tile/
+      per-patch scalar. Recommended on sloped/mountainous terrain, where
+      `ground_plane` over- or under-estimates height depending on where in
+      the tile the (few) classified ground points happen to sit. Falls back
+      to `ground_plane` with a warning if the DTM fetch fails (e.g. offline,
+      WMS unavailable, no local tiles).
     """
     # Input validation
     if not isinstance(points, np.ndarray) or points.ndim != 2 or points.shape[1] != 3:
@@ -97,11 +112,28 @@ def compute_height_above_ground(
     elif method == 'min_z':
         # Use global minimum Z
         ground_z = np.min(points[:, 2])
-    
+
     elif method == 'dtm':
-        raise NotImplementedError("DTM-based height computation not yet implemented. "
-                                "Use method='ground_plane' or 'min_z' instead.")
-    
+        # Per-point ground elevation from RGE ALTI/LiDAR HD MNT, not a single
+        # scalar — bypasses the shared points[:, 2] - ground_z tail below.
+        if dtm_fetcher is None:
+            from ...io.rge_alti_fetcher import RGEALTIFetcher
+            dtm_fetcher = RGEALTIFetcher()
+
+        dtm_ground_z = dtm_fetcher.compute_height_above_ground(points, crs=crs)
+        if dtm_ground_z is None:
+            logger.warning(
+                "DTM height computation failed (fetch/read error) — "
+                "falling back to method='ground_plane'"
+            )
+            return compute_height_above_ground(
+                points, classification, method='ground_plane',
+                ground_class=ground_class,
+            )
+
+        height = np.maximum(dtm_ground_z, 0.0)
+        return height.astype(np.float32)
+
     else:
         raise ValueError(f"Unknown method: {method}. "
                        f"Choose from: 'ground_plane', 'min_z', 'dtm'")

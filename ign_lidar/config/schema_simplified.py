@@ -117,6 +117,14 @@ class FeatureConfig:
     # Advanced features (optional)
     include_extra: bool = False  # Height stats, verticality, etc.
 
+    # Height above ground: 'ground_plane' (default, per-tile/patch min Z of
+    # ground points), 'min_z', or 'dtm' (RGE ALTI/LiDAR HD MNT, more accurate
+    # on sloped terrain — see FeaturesConfig in schema.py for details)
+    height_method: Literal["ground_plane", "min_z", "dtm"] = "ground_plane"
+    dtm_cache_dir: Optional[str] = None
+    dtm_local_dir: Optional[str] = None
+    dtm_prefer_lidar_hd: bool = True
+
     # GPU settings (auto-tuned if not specified)
     gpu_batch_size: Optional[int] = None  # Auto-calculated based on available memory
     use_gpu_chunked: bool = True

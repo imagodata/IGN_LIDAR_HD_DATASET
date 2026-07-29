@@ -76,9 +76,21 @@ class TokenBucketRateLimiter:
         self.tokens = capacity
         self.last_update = time.time()
         self.lock = threading.Lock()
-        
+
         logger.info(f"🚦 TokenBucket rate limiter: {rate} req/s, burst={capacity}")
-    
+
+    def __getstate__(self):
+        # threading.Lock is not picklable — dropped here so instances can
+        # cross a multiprocessing.Pool boundary (each worker process gets
+        # its own fresh, unheld lock instead of sharing the parent's).
+        state = self.__dict__.copy()
+        del state['lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.lock = threading.Lock()
+
     def acquire(self, timeout: Optional[float] = None) -> bool:
         """
         Acquire a token (blocking if necessary).
@@ -173,13 +185,22 @@ class CircuitBreaker:
         self.last_failure_time: Optional[float] = None
         self.half_open_calls = 0
         self.lock = threading.Lock()
-        
+
         logger.info(
             f"⚡ Circuit breaker initialized: "
             f"failure_threshold={self.config.failure_threshold}, "
             f"timeout={self.config.timeout_seconds}s"
         )
-    
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.lock = threading.Lock()
+
     def allow_request(self) -> bool:
         """
         Check if request should be allowed.
@@ -296,9 +317,20 @@ class ConcurrencyLimiter:
         self.semaphore = threading.Semaphore(max_concurrent)
         self.active_count = 0
         self.lock = threading.Lock()
-        
+
         logger.info(f"🔒 Concurrency limiter: max {max_concurrent} concurrent requests")
-    
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['semaphore']
+        del state['lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.semaphore = threading.Semaphore(self.max_concurrent)
+        self.lock = threading.Lock()
+
     def __enter__(self):
         """Acquire slot for request."""
         self.semaphore.acquire()
@@ -381,12 +413,21 @@ class WFSRateLimiter:
             'circuit_breaker_trips': 0,
         }
         self.stats_lock = threading.Lock()
-        
+
         logger.info("🎯 WFS Rate Limiter initialized")
         logger.info(f"   - Rate: {requests_per_second} req/s (burst={burst_capacity})")
         logger.info(f"   - Max concurrent: {max_concurrent}")
         logger.info(f"   - Circuit breaker: {'enabled' if enable_circuit_breaker else 'disabled'}")
-    
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['stats_lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.stats_lock = threading.Lock()
+
     def execute(
         self,
         func: Callable[[], T],

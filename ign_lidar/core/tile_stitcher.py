@@ -143,9 +143,20 @@ class TileStitcher:
         
         # Threading lock for thread-safe operations
         self._lock = threading.Lock() if self.config.get('parallel_loading', False) else None
-        
+
         logger.info(f"TileStitcher initialized (buffer_size={self.buffer_size}m, configured={config is not None})")
-    
+
+    def __getstate__(self):
+        # threading.Lock is not picklable — dropped so a TileStitcher held by
+        # the processor can cross a multiprocessing.Pool boundary.
+        state = self.__dict__.copy()
+        del state['_lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._lock = threading.Lock() if self.config.get('parallel_loading', False) else None
+
     def load_tile_with_neighbors(
         self,
         tile_path: Path,

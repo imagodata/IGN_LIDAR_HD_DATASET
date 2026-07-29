@@ -104,13 +104,41 @@ class TestComputeHeightAboveGround:
         assert height[0] == 0.0
         assert height[2] == 5.0
     
-    def test_dtm_method_not_implemented(self):
-        """Test that DTM method raises NotImplementedError."""
-        points = np.array([[0, 0, 0]], dtype=np.float32)
-        classification = np.array([2])
-        
-        with pytest.raises(NotImplementedError, match="DTM-based"):
-            compute_height_above_ground(points, classification, method='dtm')
+    def test_dtm_method_uses_fetcher(self):
+        """DTM method samples ground elevation from the given fetcher."""
+        points = np.array([
+            [0, 0, 10],
+            [1, 1, 8],
+        ], dtype=np.float32)
+        classification = np.array([2, 6])
+
+        class FakeDTMFetcher:
+            def compute_height_above_ground(self, points, dtm_data=None, bbox=None, crs="EPSG:2154"):
+                # Flat terrain at elevation 5m
+                return points[:, 2] - 5.0
+
+        height = compute_height_above_ground(
+            points, classification, method='dtm', dtm_fetcher=FakeDTMFetcher()
+        )
+        np.testing.assert_allclose(height, [5.0, 3.0])
+
+    def test_dtm_method_falls_back_on_fetch_failure(self):
+        """DTM method falls back to ground_plane if the fetcher returns None."""
+        points = np.array([
+            [0, 0, 0],
+            [1, 1, 5],
+        ], dtype=np.float32)
+        classification = np.array([2, 6])
+
+        class FailingDTMFetcher:
+            def compute_height_above_ground(self, points, dtm_data=None, bbox=None, crs="EPSG:2154"):
+                return None
+
+        height = compute_height_above_ground(
+            points, classification, method='dtm', dtm_fetcher=FailingDTMFetcher()
+        )
+        expected = compute_height_above_ground(points, classification, method='ground_plane')
+        np.testing.assert_allclose(height, expected)
     
     def test_invalid_method(self):
         """Test that invalid method raises ValueError."""

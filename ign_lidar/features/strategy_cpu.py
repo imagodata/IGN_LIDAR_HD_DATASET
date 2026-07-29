@@ -18,6 +18,7 @@ import numpy as np
 from .compute.features import compute_all_features_optimized
 from .compute.curvature import compute_curvature as compute_curvature_canonical
 from .compute.eigenvalues import compute_eigenvalue_features
+from .compute.height import compute_height_above_ground
 from .compute.rgb_nir import compute_rgb_features
 from .strategies import BaseFeatureStrategy
 from ..utils.normalization import normalize_rgb
@@ -220,8 +221,20 @@ class CPUStrategy(BaseFeatureStrategy):
                     result[feat_name] = feat_data.astype(np.float32)
 
         # Add height if we have classification
-        if classification is not None:
-            # Compute height above ground
+        height_method = kwargs.get("height_method", "ground_plane")
+        if classification is not None and height_method == "dtm":
+            # Optional pipeline parameter (see FeatureConfig.height_method):
+            # per-point ground elevation from RGE ALTI/LiDAR HD MNT instead
+            # of the single per-tile ground_z scalar below.
+            result["height"] = compute_height_above_ground(
+                points,
+                classification,
+                method="dtm",
+                dtm_fetcher=kwargs.get("dtm_fetcher"),
+                crs=kwargs.get("dtm_crs", "EPSG:2154"),
+            )
+        elif classification is not None:
+            # Compute height above ground (unchanged default behavior)
             ground_mask = classification == 2
             if ground_mask.any():
                 ground_z = points[ground_mask, 2].min()

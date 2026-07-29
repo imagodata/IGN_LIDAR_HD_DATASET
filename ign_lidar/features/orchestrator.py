@@ -200,6 +200,12 @@ class FeatureOrchestrator:
         if self.use_infrared:
             self.infrared_fetcher = self._init_infrared_fetcher()
 
+        # Initialize DTM fetcher if needed (height_method='dtm')
+        self.height_method = features_cfg.get("height_method", "ground_plane")
+        self.dtm_fetcher = None
+        if self.height_method == "dtm":
+            self.dtm_fetcher = self._init_dtm_fetcher()
+
         # Validate GPU availability if needed
         self.use_gpu = processor_cfg.get("use_gpu", False)
         self.gpu_available = False
@@ -210,6 +216,7 @@ class FeatureOrchestrator:
             f"Resources initialized | "
             f"rgb={self.rgb_fetcher is not None} | "
             f"nir={self.infrared_fetcher is not None} | "
+            f"dtm={self.dtm_fetcher is not None} | "
             f"gpu={self.gpu_available}"
         )
 
@@ -303,6 +310,60 @@ class FeatureOrchestrator:
         except Exception as e:
             error = InitializationError.create(
                 component="NIR fetcher",
+                error=e
+            )
+            logger.error(str(error))
+            return None
+
+    def _init_dtm_fetcher(self):
+        """
+        Initialize RGE ALTI®/LiDAR HD MNT digital terrain model fetcher.
+
+        Used when features.height_method='dtm': height_above_ground is then
+        sampled from IGN's national DTM instead of the per-tile/per-patch
+        min(ground points Z) scalar, which under/over-estimates height on
+        sloped terrain.
+
+        Returns:
+            RGEALTIFetcher instance or None if initialization fails
+        """
+        try:
+            from ..io.rge_alti_fetcher import RGEALTIFetcher
+
+            dtm_cache_dir = self.config.features.get("dtm_cache_dir")
+            if dtm_cache_dir is None:
+                dtm_cache_dir = Path(tempfile.gettempdir()) / "ign_lidar_cache" / "dtm"
+                dtm_cache_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                dtm_cache_dir = Path(dtm_cache_dir)
+                dtm_cache_dir.mkdir(parents=True, exist_ok=True)
+
+            fetcher = RGEALTIFetcher(
+                cache_dir=dtm_cache_dir,
+                local_dtm_dir=self.config.features.get("dtm_local_dir"),
+                prefer_lidar_hd=self.config.features.get("dtm_prefer_lidar_hd", True),
+            )
+            logger.info(
+                "DTM height enabled (height_method='dtm', RGE ALTI/LiDAR HD MNT, "
+                f"cache={dtm_cache_dir})"
+            )
+            return fetcher
+
+        except ImportError as e:
+            error = InitializationError.create(
+                component="DTM fetcher",
+                error=e,
+                dependencies=["rasterio", "requests"]
+            )
+            logger.error(str(error))
+            return None
+        except (OSError, IOError) as e:
+            logger.error(f"Failed to create DTM cache directory: {e}")
+            logger.error(f"  Check write permissions for: {dtm_cache_dir}")
+            return None
+        except Exception as e:
+            error = InitializationError.create(
+                component="DTM fetcher",
                 error=e
             )
             logger.error(str(error))
@@ -2154,6 +2215,14 @@ class FeatureOrchestrator:
                 curvature = multi_scale_features.get("curvature", np.zeros(len(points)))
 
                 # Compute height
+                # NOTE: height_method='dtm' is not wired into the multi-scale
+                # path yet — only the Strategy Pattern path (CPUStrategy)
+                # supports it. Falls back to min_z here regardless of config.
+                if self.height_method == "dtm":
+                    logger.warning(
+                        "height_method='dtm' is not supported by the "
+                        "multi-scale feature path — using min_z instead"
+                    )
                 z_min = np.min(points[:, 2])
                 height = points[:, 2] - z_min
 
@@ -2235,6 +2304,14 @@ class FeatureOrchestrator:
 
             # Add height (z-normalized) if not present
             if "height" not in feature_dict:
+                # NOTE: height_method='dtm' is not wired into the
+                # FeatureComputer path yet — only the Strategy Pattern path
+                # (CPUStrategy) supports it.
+                if self.height_method == "dtm":
+                    logger.warning(
+                        "height_method='dtm' is not supported by the "
+                        "FeatureComputer path — using min_z instead"
+                    )
                 z_min = np.min(points[:, 2])
                 feature_dict["height"] = points[:, 2] - z_min
 
@@ -2266,6 +2343,8 @@ class FeatureOrchestrator:
                 "patch_center": patch_center,
                 "mode": self.feature_mode.value,
                 "radius": search_radius,
+                "height_method": self.height_method,
+                "dtm_fetcher": self.dtm_fetcher,
             }
             
             # Add cached intermediates if available

@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.9] - 2026-07-29 - Fix num_workers>1 pickling crash, add DTM-based height option
+
+### Fixed 🐛
+
+- **`TypeError: cannot pickle '_thread.lock'` with `num_workers>1`** (`core/processor.py`
+  `_process_directory_sequential`): parallel tile processing submits
+  `functools.partial(self.process_tile, ...)` to a `multiprocessing.Pool`, which pickles the whole
+  `LiDARProcessor` instance — including `self.data_fetcher.ground_truth_fetcher.rate_limiter`
+  (`WFSRateLimiter`, `io/wfs_rate_limiter.py`), whose `TokenBucketRateLimiter`, `CircuitBreaker`
+  and `ConcurrencyLimiter` each hold a `threading.Lock`/`Semaphore`. Locks are not picklable, so
+  every multi-worker run crashed on the first tile. `num_workers=1` was the only workaround since
+  4.1.2, forcing fully sequential (RAM-bound, slow) processing. Added `__getstate__`/`__setstate__`
+  to all four classes (plus `core/tile_stitcher.py`'s `TileStitcher`, which has the same pattern)
+  so pickling drops the locks and each worker process gets fresh, unheld ones — `num_workers>1`
+  now works.
+
+### Added ✨
+
+- **`features.height_method='dtm'`**: `height_above_ground` can now be computed from IGN's
+  RGE ALTI®/LiDAR HD MNT digital terrain model (`io/rge_alti_fetcher.py`, previously implemented
+  but never wired into the pipeline) instead of the default `ground_plane` method (min Z of
+  classified ground points *within the tile/patch* — a single scalar that under/over-estimates
+  height on sloped or mountainous terrain). `compute_height_above_ground()`
+  (`features/compute/height.py`) now actually implements `method='dtm'` instead of raising
+  `NotImplementedError`; falls back to `ground_plane` with a warning if the DTM fetch fails
+  (offline, WMS down, no local tiles). New `FeaturesConfig`/`FeatureConfig` fields:
+  `height_method` (default `"ground_plane"`, unchanged behavior), `dtm_cache_dir`,
+  `dtm_local_dir`, `dtm_prefer_lidar_hd`. `FeatureOrchestrator` builds one `RGEALTIFetcher` per
+  run (reused/cached across tiles) when `height_method='dtm'`. Currently wired into the CPU
+  Strategy Pattern path (`CPUStrategy`) only — the multi-scale and `FeatureComputer` paths log a
+  warning and keep using `min_z` if `height_method='dtm'` is requested.
+
+### Notes 📝
+
+- Default behavior (`height_method='ground_plane'`) is byte-for-byte unchanged — verified via the
+  existing `test_core_height.py` suite (41 passed) plus new tests for the `dtm` method (fetcher
+  success and fetch-failure fallback), `test_wfs_rate_limiter.py` (17 passed), and a live
+  end-to-end check against the real IGN Géoplateforme WMS (LiDAR HD MNT → RGE ALTI fallback).
+  Pickling verified through the exact `partial(self.process_tile, ...)` +
+  `multiprocessing.Pool.imap` code path used in production.
+
+---
+
 ## [4.1.7] - 2026-07-28 - Critical fix: height_above_ground zero-filled, RGB/NIR crushed in PTv3 export
 
 ### Fixed 🐛
