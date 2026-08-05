@@ -19,6 +19,8 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 from numba import jit, prange
 
+from .coord_utils import recenter_to_local_f32
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -372,8 +374,14 @@ def compute_all_features_optimized(
 
     n_points = points.shape[0]
 
-    # Ensure float32 for performance
-    points = points.astype(np.float32, copy=False)
+    # Recenter BEFORE the float32 cast (performance): absolute Lambert-93
+    # coordinates quantise to 0.06-0.5 m in float32, which bands the KD-tree
+    # neighbourhoods and stripes every feature computed below. All features
+    # here derive from local covariances and are translation-invariant, so
+    # working in a local frame is exact. Self-sufficient on purpose: callers
+    # may pass absolute or already-local coordinates, recentering twice is
+    # harmless. The caller's array is never modified.
+    points, _origin = recenter_to_local_f32(points)
 
     # Build KD-tree ONCE (fast and memory-efficient)
     from sklearn.neighbors import NearestNeighbors

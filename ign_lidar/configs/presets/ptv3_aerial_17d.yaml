@@ -1,0 +1,129 @@
+# ============================================================================
+# IGN LiDAR HD - Preset: PTv3 Aerial 17D (XYZ + 14 features)
+# ============================================================================
+# Inherits: base.yaml
+#
+# Socle de training "17 canaux" : coord.npy (3) + feat.npy (14). Variante de
+# ptv3_aerial_12d.yaml qui réintroduit les deux descripteurs géométriques
+# retenus (curvature, horizontality) — les seuls du bloc eigen jugés utiles
+# après l'abandon des features striées du dataset v2.
+#
+# CONTRAT DE COLONNES — l'ordre ci-dessous est figé. Le consommateur
+# (Pointcept / configs ptv3_fractal_17d) indexe feat.npy par position, donc
+# toute permutation casse silencieusement un modèle déjà entraîné.
+#
+#   feat.npy column | feature
+#   ----------------|--------------------------------------------------------
+#   0               | intensity            (échelle log, cf. intensity_scaling)
+#   1               | return_number        (/7)
+#   2               | num_returns          (/7)
+#   3:6             | normals              (vecteurs unitaires)
+#   6               | curvature            ([0,1])
+#   7               | horizontality        ([0,1], 1 = horizontal)
+#   8:11            | rgb                  (BD ORTHO 20 cm, [0,1])
+#   11              | nir                  (BD ORTHO IRC, [0,1])
+#   12              | ndvi                 ([-1,1] remappé sur [0,1])
+#   13              | height_above_ground  (clip 100 m, /100)
+#
+#   coord.npy = XYZ recentré (XY sur le centroïde, Z ancré sur z_min).
+#   coord_absolute = coord + offset  (offset.npy, float64 Lambert-93).
+#
+# planarity/linearity restent calculées en interne mais NE font PAS partie du
+# stack 17D — les ajouter décalerait toutes les colonnes suivantes.
+# ============================================================================
+
+# Phase 4 async optimizer routes tiles through tile_orchestrator.process_tile()
+# which does not exist on TileOrchestrator and silently produces 0 patches.
+# Fall back to the standard sequential path which goes through TileProcessor.
+enable_optimizations: false
+
+defaults:
+  - ../base
+  - _self_
+
+config_version: "5.1.0"
+preset_name: "ptv3_aerial_17d"
+
+processor:
+  lod_level: "LOD2"
+  processing_mode: "enriched_and_patches"
+  architecture: "ptv3"
+  # MUST be set here too: the Hydra default (processor.output_format: laz) otherwise
+  # wins over output.format and the PTv3/Pointcept writer is never selected.
+  output_format: "ptv3_pointcept"
+  use_gpu: true
+  num_workers: 4
+  patch_overlap: 0.0
+  patch_size: 150.0
+  num_points: -1
+  augment: false
+  num_augmentations: 0
+
+features:
+  # The float32/Lambert-93 quantization that motivated this pass is fixed at the
+  # source (coord_utils.recenter_to_local_f32); the median-smoothing destripe pass
+  # is now redundant and would asymmetrically smooth horizontality (in
+  # artifact_prone_features) while leaving curvature untouched — undeclared skew
+  # between the two geometric channels this preset exists to ship. Also costly
+  # (~kNN + pure-Python loop per feature per tile).
+  enable_artifact_filtering: false
+  mode: "lod2"
+  compute_normals: true       # normals (3)
+  compute_curvature: true     # curvature (1) — arêtes de toit vs surfaces
+  compute_height: true        # height_above_ground (1)
+  compute_geometric: true     # requis pour horizontality (1)
+  compute_architectural: false
+  use_rgb: true               # +3 dims from BD ORTHO 20 cm
+  use_infrared: true          # +1 dim from BD ORTHO IRC
+  compute_ndvi: true          # +1 dim from (NIR - Red) / (NIR + Red)
+
+output:
+  format: "ptv3_pointcept"
+  save_enriched: false
+  save_patches: true
+  save_metadata: true
+  save_stats: true
+
+  ptv3:
+    layout: "folder"
+    # ⚠️ ORDRE FIGÉ — voir le contrat de colonnes en tête de fichier.
+    feat_keys:
+      - "intensity"
+      - "return_number"
+      - "num_returns"
+      - "normals"
+      - "curvature"
+      - "horizontality"
+      - "rgb"
+      - "nir"
+      - "ndvi"
+      - "height_above_ground"
+    # log1p(I) / log1p(65535) au lieu de I/65535 : l'intensité Lidar HD est très
+    # asymétrique et le scaling linéaire tasse la quasi-totalité des retours
+    # près de 0. Opt-in : les presets 9D/12D restent en "linear".
+    intensity_scaling: "log"
+    label_schema: "lidar_hd_7cl_contiguous"
+    center_xy: true
+    anchor_z_min: true
+
+    split:
+      strategy: "by_tile"
+      train: 0.8
+      val: 0.1
+      test: 0.1
+      seed: 42
+
+data_sources:
+  bd_topo:
+    enabled: true
+    features:
+      buildings: true
+      roads: true
+      water: true
+      vegetation: false
+
+preprocess:
+  enabled: false
+
+stitching:
+  enabled: false

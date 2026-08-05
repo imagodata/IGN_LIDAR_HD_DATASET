@@ -198,6 +198,8 @@ class OutputWriter:
             layout=layout,
             center_xy=bool(ptv3_cfg.get("center_xy", True)),
             anchor_z_min=bool(ptv3_cfg.get("anchor_z_min", True)),
+            # Default "linear" keeps the 9D/12D presets byte-identical.
+            intensity_scaling=str(ptv3_cfg.get("intensity_scaling", "linear")),
         )
         assigner = HashSplitAssigner(
             train=float(split_cfg.get("train", 0.8)),

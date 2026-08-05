@@ -1799,9 +1799,11 @@ class FeatureOrchestrator:
         core_features = {
             "normals",
             "curvature",
+            "horizontality",
             "height",
             "intensity",
             "return_number",
+            "num_returns",
             "is_ground",
             "is_synthetic",
         }
@@ -1865,6 +1867,7 @@ class FeatureOrchestrator:
                 - classification: (N,) classification codes
                 - intensity: (N,) intensity values
                 - return_number: (N,) return numbers
+                - num_returns: Optional (N,) total returns per emitting pulse
                 - input_rgb: Optional (N, 3) RGB from input LAZ
                 - input_nir: Optional (N,) NIR from input LAZ
                 - input_ndvi: Optional (N,) NDVI from input LAZ
@@ -1882,6 +1885,9 @@ class FeatureOrchestrator:
         classification = tile_data["classification"]
         intensity = tile_data["intensity"]
         return_number = tile_data["return_number"]
+        # .get(): older callers build tile_data without num_returns. Absent →
+        # Ptv3Formatter zero-fills that column, same as any other missing feat.
+        num_returns = tile_data.get("num_returns")
         enriched_features = tile_data.get("enriched_features", {})
 
         # V5 OPTIMIZATION: Check cache first
@@ -1996,6 +2002,7 @@ class FeatureOrchestrator:
         all_features["height"] = height
         all_features["intensity"] = intensity
         all_features["return_number"] = return_number
+        all_features["num_returns"] = num_returns
 
         # Add geometric features
         if isinstance(geo_features, dict):

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ign-lidar-hd"
-version = "4.1.14"
+version = "4.1.15"
 description = "IGN LiDAR HD Dataset Processing Library for Building LOD Classification"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -151,7 +151,7 @@ Issues = "https://github.com/sducournau/IGN_LIDAR_HD_DATASET/issues"
 include = ["ign_lidar*"]
 
 [tool.setuptools.package-data]
-ign_lidar = ["*.json", "*.txt"]
+ign_lidar = ["*.json", "*.txt", "**/*.yaml", "**/*.yml"]
 
 [tool.black]
 line-length = 88

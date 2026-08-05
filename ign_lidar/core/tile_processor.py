@@ -376,6 +376,9 @@ class TileProcessor:
             "return_number": (
                 las.return_number if hasattr(las, "return_number") else None
             ),
+            "num_returns": (
+                las.number_of_returns if hasattr(las, "number_of_returns") else None
+            ),
         }
 
     def _compute_features(
@@ -404,6 +407,7 @@ class TileProcessor:
             classification=classification,
             intensity=original_data.get("intensity"),
             return_number=original_data.get("return_number"),
+            num_returns=original_data.get("num_returns"),
             tile_bounds=self._get_tile_bounds(points),
             laz_path=laz_file,
             rgb=original_data.get("input_rgb"),

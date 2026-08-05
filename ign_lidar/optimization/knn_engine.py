@@ -394,6 +394,31 @@ class KNNEngine:
         
         return distances, indices
     
+    def _to_float32_for_faiss(
+        self,
+        points: np.ndarray,
+        query_points: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Cast reference and query points to the float32 FAISS requires.
+
+        Absolute Lambert-93 coordinates (X ≈ 6.5e5, Y ≈ 6.9e6) quantise to
+        0.06-0.5 m once cast to float32, which bands the returned
+        neighbourhoods. L2 neighbourhoods (and squared L2 distances) are
+        translation-invariant, so both arrays are moved to a common local
+        frame first — same origin for both, otherwise the query would be
+        matched against a shifted index. Inner-product search is NOT
+        translation-invariant and keeps the raw cast.
+        """
+        if self.metric != 'euclidean':
+            return points.astype(np.float32), query_points.astype(np.float32)
+
+        from ign_lidar.features.compute.coord_utils import recenter_to_local_f32
+
+        points_f32, origin = recenter_to_local_f32(points)
+        query_f32, _ = recenter_to_local_f32(query_points, origin=origin)
+        return points_f32, query_f32
+
     def _search_faiss_gpu(
         self,
         points: np.ndarray,
@@ -402,9 +427,9 @@ class KNNEngine:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Search using FAISS-GPU (fastest)."""
         from ign_lidar.optimization.faiss_utils import create_faiss_index
-        
+
         logger.debug(f"Using FAISS-GPU backend for {len(points)} points")
-        
+
         # Create optimized index
         index, res = create_faiss_index(
             n_dims=points.shape[1],
@@ -413,11 +438,10 @@ class KNNEngine:
             approximate=len(points) > 100_000,
             metric='L2' if self.metric == 'euclidean' else 'IP'
         )
-        
+
         # Convert to float32 (FAISS requirement)
-        points_f32 = points.astype(np.float32)
-        query_f32 = query_points.astype(np.float32)
-        
+        points_f32, query_f32 = self._to_float32_for_faiss(points, query_points)
+
         # Train if needed (IVF index)
         if hasattr(index, 'is_trained') and not index.is_trained:
             index.train(points_f32)
@@ -438,12 +462,11 @@ class KNNEngine:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Search using FAISS-CPU (fast)."""
         import faiss
-        
+
         logger.debug(f"Using FAISS-CPU backend for {len(points)} points")
-        
-        points_f32 = points.astype(np.float32)
-        query_f32 = query_points.astype(np.float32)
-        
+
+        points_f32, query_f32 = self._to_float32_for_faiss(points, query_points)
+
         # Create flat index for exact search
         if self.metric == 'euclidean':
             index = faiss.IndexFlatL2(points.shape[1])

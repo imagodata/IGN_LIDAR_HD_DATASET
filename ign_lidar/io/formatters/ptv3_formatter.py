@@ -61,6 +61,8 @@ SUPPORTED_FEAT_KEYS: Dict[str, int] = {
     "height_above_ground": 1,
     # Geometric descriptors (LOD2/LOD3 building discrimination). Already bounded
     # ~[0,1] by the feature engine, so _scale_feat passes them through.
+    "curvature": 1,
+    "horizontality": 1,
     "planarity": 1,
     "linearity": 1,
     "verticality": 1,
@@ -70,6 +72,13 @@ SUPPORTED_FEAT_KEYS: Dict[str, int] = {
 
 LABEL_SCHEMAS = ("lidar_hd_7cl_contiguous", "raw")
 LAYOUTS = ("folder", "pth")
+# Intensity normalisation. "linear" is the historical behaviour and stays the
+# default: the 9D/12D datasets already used to train shipped models were built
+# with it, and silently switching would break their reproducibility. "log"
+# (opt-in, used by the 17D preset) compresses the long uint16 tail so the bulk
+# of Lidar HD returns — clustered in the low thousands — actually spreads over
+# the usable range instead of being crushed near 0.
+INTENSITY_SCALINGS = ("linear", "log")
 
 
 class Ptv3Formatter(BaseFormatter):
@@ -89,6 +98,7 @@ class Ptv3Formatter(BaseFormatter):
         center_xy: bool = True,
         anchor_z_min: bool = True,
         ignore_index: int = LIDARHD_7CL_IGNORE_INDEX,
+        intensity_scaling: str = "linear",
     ):
         super().__init__(num_points=-1, normalize=False, standardize_features=False)
 
@@ -98,6 +108,11 @@ class Ptv3Formatter(BaseFormatter):
             )
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {LAYOUTS}, got {layout!r}")
+        if intensity_scaling not in INTENSITY_SCALINGS:
+            raise ValueError(
+                f"intensity_scaling must be one of {INTENSITY_SCALINGS}, "
+                f"got {intensity_scaling!r}"
+            )
         for key in feat_keys:
             if key not in SUPPORTED_FEAT_KEYS:
                 raise ValueError(
@@ -110,6 +125,7 @@ class Ptv3Formatter(BaseFormatter):
         self.center_xy = center_xy
         self.anchor_z_min = anchor_z_min
         self.ignore_index = int(ignore_index)
+        self.intensity_scaling = intensity_scaling
 
     # ------------------------------------------------------------------ format
 
@@ -119,8 +135,8 @@ class Ptv3Formatter(BaseFormatter):
         Args:
             patch: Dict from the upstream pipeline. Must contain `points` (N,3)
                 and `labels` (N,). Optional: `normals`, `intensity`,
-                `return_number`, `num_returns`, `ndvi`, `nir`, `rgb`,
-                `height_above_ground`. Identifiers expected:
+                `return_number`, `num_returns`, `curvature`, `horizontality`,
+                `ndvi`, `nir`, `rgb`, `height_above_ground`. Identifiers expected:
                 `patch_id` and/or `tile_id`.
 
         Returns:
@@ -242,6 +258,7 @@ class Ptv3Formatter(BaseFormatter):
             "ignore_index": self.ignore_index,
             "feat_keys": list(self.feat_keys),
             "feat_dim": sum(SUPPORTED_FEAT_KEYS[k] for k in self.feat_keys),
+            "intensity_scaling": self.intensity_scaling,
             "layout": self.layout,
             "coord_dim": 3,
             "center_xy": self.center_xy,
@@ -387,12 +404,13 @@ class Ptv3Formatter(BaseFormatter):
             return ["r", "g", "b"]
         return [f"{key}_{i}" for i in range(width)]
 
-    @staticmethod
-    def _scale_feat(key: str, arr: np.ndarray) -> np.ndarray:
+    def _scale_feat(self, key: str, arr: np.ndarray) -> np.ndarray:
         # Per-feature scaling kept simple and deterministic. PTv3 prefers
         # bounded, ~unit-scale inputs but is robust to small deviations.
         if key == "intensity":
             # Common Lidar HD range is uint16 [0, ~65535]; normalize to [0, 1].
+            if self.intensity_scaling == "log":
+                return np.log1p(np.clip(arr, 0.0, 65535.0)) / np.log1p(65535.0)
             return np.clip(arr / 65535.0, 0.0, 1.0)
         if key in ("return_number", "num_returns"):
             return np.clip(arr / 7.0, 0.0, 1.0)  # spec caps at 7 returns
@@ -412,7 +430,15 @@ class Ptv3Formatter(BaseFormatter):
             # buildings ≤ 80 m). Clip + /100 gives a bounded, deterministic input
             # without per-patch statistics (which collapse on flat ground patches).
             return np.clip(arr / 100.0, 0.0, 1.0)
-        if key in ("planarity", "linearity", "verticality", "wall_score", "roof_score"):
+        if key in (
+            "curvature",
+            "horizontality",
+            "planarity",
+            "linearity",
+            "verticality",
+            "wall_score",
+            "roof_score",
+        ):
             # Geometric descriptors are already ~[0,1]; clip defensively.
             return np.clip(arr, 0.0, 1.0)
         # normals already unit vectors.

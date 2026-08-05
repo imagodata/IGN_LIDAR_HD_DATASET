@@ -23,6 +23,8 @@ import numpy as np
 import logging
 
 from .strategies import BaseFeatureStrategy
+from .compute.architectural import compute_horizontality
+from .compute.coord_utils import recenter_to_local_f32
 from .compute.rgb_nir import compute_rgb_features
 from .compute.gpu_memory_integration import get_gpu_memory_pool
 from .compute.gpu_stream_overlap import get_gpu_stream_optimizer, StreamPhase
@@ -260,8 +262,15 @@ class GPUChunkedStrategy(BaseFeatureStrategy):
                 num_features=len(feature_names),
             ) as pool_ctx:
 
+                # Geometry is computed in a LOCAL frame: the GPU works in
+                # float32, and absolute Lambert-93 coordinates quantise to
+                # 0.06-0.5 m at that precision (see coord_utils). Normals and
+                # curvature are translation-invariant; `points` (absolute) is
+                # still used below for the height reference.
+                points_local, _origin = recenter_to_local_f32(points)
+
                 # Phase 3.1: Batch upload input data (per-chunk)
-                input_data = {"points": points}
+                input_data = {"points": points_local}
                 if rgb is not None:
                     input_data["rgb"] = rgb
                 if nir is not None:
@@ -272,7 +281,7 @@ class GPUChunkedStrategy(BaseFeatureStrategy):
                 gpu_inputs = transfer_ctx.batch_upload(input_data, batch_id="chunked_inputs")
 
                 # Extract GPU arrays
-                gpu_points = gpu_inputs.get("points", points)
+                gpu_points = gpu_inputs.get("points", points_local)
                 gpu_rgb = gpu_inputs.get("rgb", None) if rgb is not None else None
                 gpu_nir = gpu_inputs.get("nir", None) if nir is not None else None
 
@@ -305,6 +314,13 @@ class GPUChunkedStrategy(BaseFeatureStrategy):
                 verticality = (1.0 - np.abs(normals[:, 2])).astype(np.float32)
                 verticality = np.clip(verticality, 0.0, 1.0).astype(np.float32)
                 gpu_results["verticality"] = verticality
+                pool_ctx.record_reuse()
+                pooling_stats.record_feature()
+
+                # Horizontality: |normal_z| (roofs/ground ≈ 1, walls ≈ 0)
+                # Core feature expected downstream (feature_modes, thresholds,
+                # classification rules) - always present, like on CPU.
+                gpu_results["horizontality"] = compute_horizontality(normals)
                 pool_ctx.record_reuse()
                 pooling_stats.record_feature()
 

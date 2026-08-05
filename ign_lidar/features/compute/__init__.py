@@ -154,6 +154,7 @@ from .dispatcher import compute_all_features  # Main public API
 from .dispatcher import ComputeMode
 
 # Utilities
+from .coord_utils import recenter_to_local_f32
 from .utils import (
     batched_inverse_3x3,
     clip_features,
@@ -231,6 +232,7 @@ __all__ = [
     "compute_building_regularity",
     "compute_corner_likelihood",
     # Utilities
+    "recenter_to_local_f32",
     "validate_points",
     "validate_eigenvalues",
     "validate_normals",

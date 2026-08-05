@@ -151,20 +151,20 @@ class TileOrchestrator:
         )
 
         # 2. Extract and prepare tile data
-        points, intensity, return_number, classification, input_rgb, input_nir, input_ndvi, enriched_features = (
+        points, intensity, return_number, num_returns, classification, input_rgb, input_nir, input_ndvi, enriched_features = (
             self._extract_tile_data(tile_data)
         )
-        
+
         # Store original data for all versions
         original_data = self._create_original_data_dict(
-            points, intensity, return_number, classification,
+            points, intensity, return_number, num_returns, classification,
             input_rgb, input_nir, input_ndvi, enriched_features, tile_data
         )
 
         # 3. Augment ground points with DTM if enabled (BEFORE feature computation)
-        points, classification, intensity, return_number, input_rgb, input_nir, input_ndvi = (
+        points, classification, intensity, return_number, num_returns, input_rgb, input_nir, input_ndvi = (
             self._augment_ground_with_dtm_if_enabled(
-                points, classification, intensity, return_number,
+                points, classification, intensity, return_number, num_returns,
                 input_rgb, input_nir, input_ndvi
             )
         )
@@ -178,6 +178,7 @@ class TileOrchestrator:
                 "points": points,
                 "intensity": intensity,
                 "return_number": return_number,
+                "num_returns": num_returns,
                 "classification": classification,
                 "input_rgb": input_rgb,
                 "input_nir": input_nir,
@@ -273,20 +274,24 @@ class TileOrchestrator:
             tile_data: Dictionary from TileLoader
             
         Returns:
-            Tuple of (points, intensity, return_number, classification,
+            Tuple of (points, intensity, return_number, num_returns, classification,
                      input_rgb, input_nir, input_ndvi, enriched_features)
         """
         points = tile_data["points"]
         intensity = tile_data["intensity"]
         return_number = tile_data["return_number"]
+        # .get(): tile_data dicts built outside TileLoader (tests, FRACTAL
+        # conversion) predate this key; a missing num_returns just zero-fills
+        # its PTv3 column instead of blowing up the whole tile.
+        num_returns = tile_data.get("num_returns")
         classification = tile_data["classification"]
         input_rgb = tile_data.get("input_rgb")
         input_nir = tile_data.get("input_nir")
         input_ndvi = tile_data.get("input_ndvi")
         enriched_features = tile_data.get("enriched_features", {})
-        
+
         return (
-            points, intensity, return_number, classification,
+            points, intensity, return_number, num_returns, classification,
             input_rgb, input_nir, input_ndvi, enriched_features
         )
 
@@ -295,6 +300,7 @@ class TileOrchestrator:
         points: np.ndarray,
         intensity: Optional[np.ndarray],
         return_number: Optional[np.ndarray],
+        num_returns: Optional[np.ndarray],
         classification: np.ndarray,
         input_rgb: Optional[np.ndarray],
         input_nir: Optional[np.ndarray],
@@ -309,13 +315,14 @@ class TileOrchestrator:
             points: Point cloud coordinates
             intensity: Intensity values
             return_number: Return number values
+            num_returns: Total returns per emitting pulse
             classification: Classification codes
             input_rgb: RGB colors
             input_nir: NIR values
             input_ndvi: NDVI values
             enriched_features: Pre-computed features
             tile_data: Raw tile data from loader
-            
+
         Returns:
             Dictionary with original data
         """
@@ -323,6 +330,7 @@ class TileOrchestrator:
             "points": points,
             "intensity": intensity,
             "return_number": return_number,
+            "num_returns": num_returns,
             "classification": classification,
             "input_rgb": input_rgb,
             "input_nir": input_nir,
@@ -338,6 +346,7 @@ class TileOrchestrator:
         classification: np.ndarray,
         intensity: Optional[np.ndarray],
         return_number: Optional[np.ndarray],
+        num_returns: Optional[np.ndarray],
         input_rgb: Optional[np.ndarray],
         input_nir: Optional[np.ndarray],
         input_ndvi: Optional[np.ndarray],
@@ -353,13 +362,15 @@ class TileOrchestrator:
             classification: Classification codes [N]
             intensity: Intensity values [N] or None
             return_number: Return numbers [N] or None
+            num_returns: Total returns per pulse [N] or None
             input_rgb: RGB colors [N, 3] or None
             input_nir: NIR values [N] or None
             input_ndvi: NDVI values [N] or None
-            
+
         Returns:
             Tuple of (points, classification, intensity, return_number,
-                     input_rgb, input_nir, input_ndvi) with augmented data
+                     num_returns, input_rgb, input_nir, input_ndvi)
+            with augmented data
         """
         rge_alti_enabled = OmegaConf.select(
             self.config, "data_sources.rge_alti.enabled", default=False
@@ -370,7 +381,7 @@ class TileOrchestrator:
 
         if not (rge_alti_enabled and augment_ground):
             return (
-                points, classification, intensity, return_number,
+                points, classification, intensity, return_number, num_returns,
                 input_rgb, input_nir, input_ndvi
             )
 
@@ -402,6 +413,11 @@ class TileOrchestrator:
                     intensity = np.concatenate([intensity, np.zeros(n_added, dtype=intensity.dtype)])
                 if return_number is not None:
                     return_number = np.concatenate([return_number, np.ones(n_added, dtype=return_number.dtype)])
+                # A synthetic DTM point stands for a lone ground echo:
+                # return_number = num_returns = 1 (not 0, which is not a legal
+                # LAS value and would read as "unknown" to the network).
+                if num_returns is not None:
+                    num_returns = np.concatenate([num_returns, np.ones(n_added, dtype=num_returns.dtype)])
                 if input_rgb is not None:
                     input_rgb = np.concatenate([input_rgb, np.zeros((n_added, 3), dtype=input_rgb.dtype)])
                 if input_nir is not None:
@@ -411,13 +427,13 @@ class TileOrchestrator:
                 
                 return (
                     points_augmented, classification_augmented, intensity, return_number,
-                    input_rgb, input_nir, input_ndvi
+                    num_returns, input_rgb, input_nir, input_ndvi
                 )
         except Exception as e:
             logger.warning(f"  ⚠️  DTM augmentation failed: {e}")
-        
+
         return (
-            points, classification, intensity, return_number,
+            points, classification, intensity, return_number, num_returns,
             input_rgb, input_nir, input_ndvi
         )
 

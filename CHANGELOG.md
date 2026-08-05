@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.15] - 2026-08-05 - Fix float32 quantization of Lambert-93 coordinates; native PTv3 17D contract
+
+### Fixed 🐛
+
+- **Geometric features (normals, curvature, planarity, linearity, sphericity,
+  verticality, horizontality) were computed on Lambert-93 coordinates cast
+  directly to float32.** At Lidar HD magnitudes (X≈650000, Y≈6860000) float32
+  resolution is ~0.06m (X) to ~0.5m (Y) — coarse enough to quantize the point
+  cloud onto a regular grid before any k-NN/PCA neighborhood search, producing
+  systematic striping artifacts aligned with the quantization axis. Root cause
+  traced to three cast sites: `TileLoader._load_tile_standard`/
+  `_load_tile_chunked` (`core/classification/io/tiles.py`, the default tile
+  loader — cast to float32 at LAZ load time, before anything downstream could
+  recover the lost precision), `compute_all_features_optimized`
+  (`features/compute/features.py`, the canonical CPU implementation), and
+  `compute_features_gpu_pipeline` (`features/gpu_processor.py`, GPU path).
+  Fixed by keeping XYZ in float64 through tile loading and subtracting a
+  float64 local origin (new `features/compute/coord_utils.recenter_to_local_f32`)
+  before any float32 cast used for neighborhood search — applied at the CPU
+  canonical path, the GPU pipeline entry point, and defensively inside the
+  shared FAISS/cuML KNN engines (`optimization/knn_engine.py`,
+  `optimization/gpu_accelerated_ops.py`). DTM/RGE ALTI height sampling
+  continues to use absolute coordinates unchanged (recentering is local to
+  copies, never mutates the caller's array).
+  Empirically validated on a full real Lidar HD tile (29.2M points,
+  Clermont-Ferrand): 2D-FFT peak-to-floor striping ratio on ground-point
+  planarity drops from 992.5 to 102.0 (÷9.7); the pre-fix peak sits exactly at
+  `fx=0` (period 4.00m, aligned with the quantized Y axis) and disappears
+  after the fix. Ground points were previously described as more "linear"
+  (mean linearity 0.767) than "planar" (mean planarity 0.199) — physically
+  backwards; after the fix, planarity 0.610 / linearity 0.342. No
+  over-smoothing observed (curvature tail preserved; plane/edge separation,
+  measured by Cohen's d on an independent height-based edge probe, improves
+  from −0.15 to +1.49).
+- **`horizontality` (`abs(normal_z)`) was never added to the CPU/GPU feature
+  dict** despite being referenced by several downstream consumers
+  (artifact filtering, building/roof classification thresholds) — silently
+  absent, not an error. Now computed unconditionally in `strategy_cpu.py`/
+  `strategy_gpu.py`/`strategy_gpu_chunked.py` via the existing
+  `compute_horizontality()`, and added to the `core_features` allowlist so it
+  survives `filter_features()` under every feature mode, including
+  `"minimal"`.
+- **`num_returns` was never populated from the LAS file.** `TileLoader` read
+  `return_number` but not `las.number_of_returns`; `Ptv3Formatter._build_feat`
+  silently zero-filled the `num_returns` column for every dataset ever
+  produced with a `num_returns` feat key. Now loaded and threaded through
+  `TileLoader` (standard and chunked paths, including bbox/preprocessing
+  masks), `tile_orchestrator.py` (including synthetic-point padding), and
+  `features/orchestrator.py`.
+
+### Added ✨
+
+- `curvature` and `horizontality` added to `Ptv3Formatter.SUPPORTED_FEAT_KEYS`.
+- `Ptv3Formatter(intensity_scaling="linear"|"log")` (default `"linear"`,
+  bit-identical to prior behavior for existing presets/datasets). `"log"` is
+  opt-in for new presets.
+- New preset `ign_lidar/configs/presets/ptv3_aerial_17d.yaml`: native XYZ + 14
+  feature PTv3/Pointcept contract (intensity, return_number, num_returns,
+  normals×3, curvature, horizontality, rgb×3, nir, ndvi, height_above_ground),
+  `intensity_scaling="log"`, artifact-filtering disabled (redundant now that
+  striping is fixed at the source, and it previously would have smoothed
+  `horizontality` but not `curvature` — an undeclared asymmetry). Does not
+  change `ptv3_aerial.yaml` (9D) or `ptv3_aerial_12d.yaml` (12D), which keep
+  their existing column order and `intensity_scaling="linear"`.
+- `tests/test_coord_precision_fix.py`, `tests/test_ptv3_17d_contract.py`:
+  translation invariance at `atol=1e-4` (measured post-fix: <1e-6), recenter-
+  before-cast, DTM offset combination, tile-loader float64 characterization,
+  `number_of_returns`→`num_returns`, full (N,14) contract (dtype/shape/no
+  constant or non-finite column/`coord+offset` reconstruction), and — added
+  after code review flagged that the initial preset shipped without it — a
+  test loading `ptv3_aerial_17d.yaml` through the real `HydraRunner` config
+  resolver to confirm `processor.output_format` actually resolves to
+  `"ptv3_pointcept"` (a preset that only sets `output.format` silently loses
+  to the `processor.output_format: "laz"` default and never invokes the PTv3
+  writer at all).
+
+- **Packaging: `ign_lidar/configs/**/*.yaml` (all 38 config/preset files, including
+  every `ptv3_aerial*` preset) were never included in the built wheel or sdist**
+  — `[tool.setuptools.package-data]` only listed `*.json`/`*.txt`, and
+  `MANIFEST.in` didn't cover `*.yaml` either. Confirmed by building the actual
+  4.1.14 wheel: `configs/` is entirely absent from it. This has been masked in
+  practice because the training pipeline installs from a git checkout, not
+  from PyPI — but `pip install ign-lidar-hd` + any `--config presets/...`
+  workflow was broken for every prior release. Fixed by adding
+  `**/*.yaml`/`**/*.yml` to `package-data` and `MANIFEST.in`.
+
+### Known limitations 📝
+
+- GPU/FAISS/cuML code paths received the same fix but were not exercised on
+  real data (no CUDA/CuPy available in the validation environment); the CPU
+  canonical path was validated end-to-end on a full 29.2M-point tile.
+- `intensity` (feat.npy column 0) is double-normalized: `TileLoader` already
+  divides by 65535 at load time, then `Ptv3Formatter._scale_feat` divides
+  (linear) or `log1p`s (log) again, assuming raw uint16 input. Pre-existing,
+  not a regression from this release (verified against `4.1.14`) — `"log"`
+  compresses the column to ~6.25% of `[0,1]` instead of the intended full
+  dynamic range. Not fixed here (would change output for the 9D/12D presets
+  already used to produce existing datasets); tracked for a follow-up
+  decision.
+- `ign-lidar-hd process` (Hydra CLI) fails on `TileOrchestrator.process_tile`
+  (does not exist; only `process_tile_core` does) unless the config sets
+  `enable_optimizations: false` — pre-existing in 4.1.14, reproduced
+  identically on a pristine checkout, unrelated to this fix.
+  `ptv3_aerial_17d.yaml` sets the workaround (mirroring `ptv3_aerial.yaml`);
+  `ptv3_aerial_12d.yaml` does not.
+
+### Notes 📝
+
+Full test suite: 1078 passed (2 new test files, 32 new tests), 3 failed / 6
+errors — all pre-existing on a pristine `4.1.14` checkout (unrelated GPU
+batch-transfer tests requiring CUDA, a `test_roof_classifier.py` numpy
+casting issue, one pre-existing test-collection `NameError`), confirmed
+identical before and after this change.
+
+---
+
 ## [4.1.14] - 2026-07-29 - Fix WMS 403 handling and eliminate wasted RGB/NIR fetch
 
 ### Fixed 🐛

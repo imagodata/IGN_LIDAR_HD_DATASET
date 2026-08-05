@@ -65,6 +65,7 @@ class TileLoader:
                 - points: (N, 3) XYZ coordinates
                 - intensity: (N,) intensity values [0-1]
                 - return_number: (N,) return numbers
+                - num_returns: (N,) total returns for the emitting pulse
                 - classification: (N,) classification codes
                 - input_rgb: (N, 3) RGB values [0-1] if available
                 - input_nir: (N,) NIR values [0-1] if available
@@ -120,9 +121,20 @@ class TileLoader:
             return None
         
         # Extract basic data
-        points = np.vstack([las.x, las.y, las.z]).T.astype(np.float32)
+        # ⚠️  float64 is REQUIRED here: las.x/y/z are absolute Lambert-93
+        # coordinates (X ≈ 6.5e5, Y ≈ 6.9e6) and float32 only resolves
+        # ~0.06 m in X / ~0.5 m in Y at that magnitude. Casting on load
+        # quantises the cloud before any consumer can recenter it, which
+        # bands the k-NN neighbourhoods and stripes the geometric features.
+        # Downstream code recenters to a local frame before its own float32
+        # cast (see features/compute/coord_utils.recenter_to_local_f32).
+        points = np.vstack([las.x, las.y, las.z]).T.astype(np.float64)
         intensity = np.array(las.intensity, dtype=np.float32) / 65535.0
         return_number = np.array(las.return_number, dtype=np.float32)
+        # LAS 1.x standard field, exposed by laspy as `number_of_returns`. The
+        # PTv3 feature stack names it "num_returns" (SUPPORTED_FEAT_KEYS in
+        # ptv3_formatter.py); without it that column was silently zero-filled.
+        num_returns = np.array(las.number_of_returns, dtype=np.float32)
         classification = np.array(las.classification, dtype=np.uint8)
         
         # Normalize classification codes (handle non-standard IGN classes)
@@ -162,6 +174,7 @@ class TileLoader:
             'points': points,
             'intensity': intensity,
             'return_number': return_number,
+            'num_returns': num_returns,
             'classification': classification,
             'input_rgb': input_rgb,
             'input_nir': input_nir,
@@ -190,6 +203,7 @@ class TileLoader:
                     all_points = []
                     all_intensity = []
                     all_return_number = []
+                    all_num_returns = []
                     all_classification = []
                     all_rgb = []
                     all_nir = []
@@ -197,11 +211,12 @@ class TileLoader:
                     for i, chunk in enumerate(laz_reader.chunk_iterator(chunk_size)):
                         logger.info(f"    📦 Chunk {i+1}/{num_chunks}...")
                         
-                        # Basic data
-                        chunk_xyz = np.vstack([chunk.x, chunk.y, chunk.z]).T.astype(np.float32)
+                        # Basic data (float64: see _load_tile_standard)
+                        chunk_xyz = np.vstack([chunk.x, chunk.y, chunk.z]).T.astype(np.float64)
                         all_points.append(chunk_xyz)
                         all_intensity.append(np.array(chunk.intensity, dtype=np.float32) / 65535.0)
                         all_return_number.append(np.array(chunk.return_number, dtype=np.float32))
+                        all_num_returns.append(np.array(chunk.number_of_returns, dtype=np.float32))
                         
                         # Normalize classification for each chunk
                         chunk_classification = np.array(chunk.classification, dtype=np.uint8)
@@ -232,6 +247,7 @@ class TileLoader:
                     points = np.vstack(all_points)
                     intensity = np.concatenate(all_intensity)
                     return_number = np.concatenate(all_return_number)
+                    num_returns = np.concatenate(all_num_returns)
                     classification = np.concatenate(all_classification)
                     
                     input_rgb = np.vstack(all_rgb) if all_rgb else None
@@ -249,6 +265,7 @@ class TileLoader:
                         'points': points,
                         'intensity': intensity,
                         'return_number': return_number,
+                        'num_returns': num_returns,
                         'classification': classification,
                         'input_rgb': input_rgb,
                         'input_nir': input_nir,
@@ -363,6 +380,7 @@ class TileLoader:
         tile_data['points'] = points[mask]
         tile_data['intensity'] = tile_data['intensity'][mask]
         tile_data['return_number'] = tile_data['return_number'][mask]
+        tile_data['num_returns'] = tile_data['num_returns'][mask]
         tile_data['classification'] = tile_data['classification'][mask]
         
         # Filter optional arrays
@@ -436,6 +454,7 @@ class TileLoader:
         tile_data['points'] = points[cumulative_mask]
         tile_data['intensity'] = tile_data['intensity'][cumulative_mask]
         tile_data['return_number'] = tile_data['return_number'][cumulative_mask]
+        tile_data['num_returns'] = tile_data['num_returns'][cumulative_mask]
         tile_data['classification'] = tile_data['classification'][cumulative_mask]
         
         if tile_data['input_rgb'] is not None:
@@ -459,6 +478,7 @@ class TileLoader:
             tile_data['points'] = points_filtered
             tile_data['intensity'] = tile_data['intensity'][voxel_indices]
             tile_data['return_number'] = tile_data['return_number'][voxel_indices]
+            tile_data['num_returns'] = tile_data['num_returns'][voxel_indices]
             tile_data['classification'] = tile_data['classification'][voxel_indices]
             
             if tile_data['input_rgb'] is not None:

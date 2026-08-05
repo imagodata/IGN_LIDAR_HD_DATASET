@@ -125,6 +125,7 @@ from ..features.compute import compute_verticality as core_compute_verticality
 from ..features.compute import (
     extract_geometric_features as core_extract_geometric_features,
 )
+from .compute.coord_utils import recenter_to_local_f32
 from .compute.curvature import compute_curvature_from_normals
 
 # Import GPU-Core Bridge
@@ -380,9 +381,14 @@ class GPUProcessor:
             return self.compute_features(points, feature_types, k)
         
         logger.info(f"🚀 GPU Pipeline: Processing {len(points):,} points (k={k})")
-        
+
         # ===== SINGLE CPU→GPU TRANSFER =====
-        points_gpu = cp.asarray(points, dtype=cp.float32)
+        # Recenter BEFORE the float32 upload: absolute Lambert-93 coordinates
+        # quantise to 0.06-0.5 m in float32, which would band the k-NN graph
+        # and the PCA below. Every feature produced here derives from local
+        # covariances, so the local frame is exact (see coord_utils).
+        points_local, _origin = recenter_to_local_f32(points)
+        points_gpu = cp.asarray(points_local, dtype=cp.float32)
         logger.debug("  ⬆️  CPU→GPU: points")
         
         # ===== ALL COMPUTATIONS ON GPU =====
@@ -394,9 +400,10 @@ class GPUProcessor:
             distances_gpu, indices_gpu = knn.kneighbors(points_gpu)
         else:
             # Fallback to CPU KNN but keep results on GPU (batch upload)
+            # Same local frame as points_gpu so both branches agree.
             knn_cpu = NearestNeighbors(n_neighbors=k, algorithm='auto', n_jobs=-1)
-            knn_cpu.fit(points)
-            distances, indices = knn_cpu.kneighbors(points)
+            knn_cpu.fit(points_local)
+            distances, indices = knn_cpu.kneighbors(points_local)
             distances_gpu, indices_gpu = gpu.batch_upload(
                 distances.astype(np.float32),
                 indices.astype(np.int32)
@@ -565,6 +572,14 @@ class GPUProcessor:
             show_progress if show_progress is not None else self.show_progress
         )
 
+        # Absolute Lambert-93 coordinates must never reach the float32 GPU
+        # kernels / FAISS indexes below (0.06-0.5 m quantisation, see
+        # coord_utils). Done once here rather than at each internal cast site.
+        # CuPy arrays are left alone: they were already recentered by the
+        # caller before upload (GPUStrategy / GPUChunkedStrategy).
+        if isinstance(points, np.ndarray):
+            points, _origin = recenter_to_local_f32(points)
+
         # Select strategy
         strategy = self._select_strategy(n_points)
 
@@ -600,6 +615,10 @@ class GPUProcessor:
             show_progress if show_progress is not None else self.show_progress
         )
         strategy = self._select_strategy(n_points)
+
+        # See compute_features(): local frame before any float32 cast.
+        if isinstance(points, np.ndarray):
+            points, _origin = recenter_to_local_f32(points)
 
         if strategy == "chunk":
             return self._compute_curvature_chunked(points, normals, k, show_progress)

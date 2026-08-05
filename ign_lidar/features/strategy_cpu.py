@@ -15,6 +15,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
+from .compute.architectural import compute_horizontality
 from .compute.features import compute_all_features_optimized
 from .compute.curvature import compute_curvature as compute_curvature_canonical
 from .compute.eigenvalues import compute_eigenvalue_features
@@ -193,6 +194,11 @@ class CPUStrategy(BaseFeatureStrategy):
             "planarity": features["planarity"].astype(np.float32),
             "linearity": features["linearity"].astype(np.float32),
             "sphericity": features["sphericity"].astype(np.float32),
+            # 🔧 FIX: horizontality is a CORE feature (roofs/ground vs walls) -
+            # feature_modes.py, thresholds.py and the classification rules all
+            # expect it in this dict, so it must always be present, not gated
+            # behind include_extra like verticality below.
+            "horizontality": compute_horizontality(features["normals"]),
         }
 
         # Add advanced features if requested

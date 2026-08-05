@@ -263,8 +263,16 @@ class GPUAcceleratedOps:
         """KNN avec FAISS-GPU (le plus rapide)."""
         import faiss
 
-        points_f32 = points.astype(np.float32)
-        query_f32 = query_points.astype(np.float32)
+        # Recentrage AVANT le cast float32 : en Lambert-93 (X ≈ 6.5e5,
+        # Y ≈ 6.9e6) un float32 ne résout que 0.06-0.5 m, ce qui strie les
+        # voisinages retournés. Les voisinages L2 sont invariants par
+        # translation (et cette méthode n'est appelée que pour la métrique
+        # euclidienne, cf. knn()), à condition que référence et requêtes
+        # partagent la MÊME origine.
+        from ign_lidar.features.compute.coord_utils import recenter_to_local_f32
+
+        points_f32, origin = recenter_to_local_f32(points)
+        query_f32, _ = recenter_to_local_f32(query_points, origin=origin)
 
         d = points_f32.shape[1]
 
