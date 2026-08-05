@@ -205,8 +205,14 @@ def extract_patches(
             if source_indices is not None:
                 patch['source_indices'] = source_indices[mask]
             
-            # Add features
+            # Add features. `None` values (e.g. num_returns when the tile_data
+            # dict that produced `features` didn't supply it) are explicit
+            # here rather than relying on validate_features() having already
+            # dropped them upstream -- a caller that skips validation would
+            # otherwise hit `TypeError: 'NoneType' object is not subscriptable`.
             for feature_name, feature_data in features.items():
+                if feature_data is None:
+                    continue
                 patch[feature_name] = feature_data[mask]
             
             # Resample to target number of points if specified
@@ -286,12 +292,15 @@ def augment_raw_points(
     nir: Optional[np.ndarray] = None,
     ndvi: Optional[np.ndarray] = None,
     config: Optional[AugmentationConfig] = None,
-    return_mask: bool = False
+    return_mask: bool = False,
+    num_returns: Optional[np.ndarray] = None,
 ) -> Union[
-    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, 
-          Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]],
     Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
-          Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], np.ndarray]
+          Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray],
+          Optional[np.ndarray]],
+    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+          Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray],
+          Optional[np.ndarray], np.ndarray]
 ]:
     """Apply data augmentation to raw point cloud data BEFORE feature computation.
     
@@ -315,10 +324,14 @@ def augment_raw_points(
         ndvi: NDVI values [N] (optional)
         config: Augmentation configuration (None = use defaults)
         return_mask: If True, return keep_mask as last element
-        
+        num_returns: Total-returns-per-pulse values [N] (optional). Added
+            after `return_mask` to keep the first 7 positional slots stable
+            for any pre-existing caller.
+
     Returns:
-        Tuple of (augmented_points, intensity, return_number, classification, rgb, nir, ndvi)
-        If return_mask=True, also returns keep_mask as 8th element
+        Tuple of (augmented_points, intensity, return_number, classification,
+        rgb, nir, ndvi, num_returns). If return_mask=True, also returns
+        keep_mask as the last element.
     """
     if config is None:
         config = AugmentationConfig()
@@ -358,13 +371,14 @@ def augment_raw_points(
     rgb_aug = rgb[keep_mask] if rgb is not None else None
     nir_aug = nir[keep_mask] if nir is not None else None
     ndvi_aug = ndvi[keep_mask] if ndvi is not None else None
-    
+    num_returns_aug = num_returns[keep_mask] if num_returns is not None else None
+
     if return_mask:
         return (points_aug, intensity_aug, return_number_aug, classification_aug,
-                rgb_aug, nir_aug, ndvi_aug, keep_mask)
+                rgb_aug, nir_aug, ndvi_aug, num_returns_aug, keep_mask)
     else:
         return (points_aug, intensity_aug, return_number_aug, classification_aug,
-                rgb_aug, nir_aug, ndvi_aug)
+                rgb_aug, nir_aug, ndvi_aug, num_returns_aug)
 
 
 def augment_patch(

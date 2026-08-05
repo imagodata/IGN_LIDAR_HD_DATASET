@@ -401,17 +401,14 @@ class TileProcessor:
         points = original_data["points"]
         classification = original_data["classification"]
 
-        # Compute features using orchestrator
-        all_features = self.feature_orchestrator.compute_all_features(
-            points=points,
-            classification=classification,
-            intensity=original_data.get("intensity"),
-            return_number=original_data.get("return_number"),
-            num_returns=original_data.get("num_returns"),
-            tile_bounds=self._get_tile_bounds(points),
-            laz_path=laz_file,
-            rgb=original_data.get("input_rgb"),
-            nir=original_data.get("input_nir"),
+        # Compute features using orchestrator. `FeatureOrchestrator` has no
+        # `compute_all_features` method (only `FeatureComputer` does) -- this
+        # call used to raise AttributeError unconditionally. `compute_features`
+        # takes the tile_data dict as a single argument, matching the shape
+        # `_load_tile()` already returns (points/classification/intensity/
+        # return_number/num_returns/input_rgb/input_nir/...).
+        all_features = self.feature_orchestrator.compute_features(
+            tile_data=original_data,
         )
 
         # Validate feature array sizes

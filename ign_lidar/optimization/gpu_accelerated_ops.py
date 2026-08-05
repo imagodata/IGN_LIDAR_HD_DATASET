@@ -328,9 +328,18 @@ class GPUAcceleratedOps:
         """KNN avec cuML-GPU (alternative FAISS)."""
         from cuml.neighbors import NearestNeighbors
 
+        # Same recentering as _knn_faiss (see its comment): cuML casts to
+        # float32 internally, and this method is only reached for
+        # metric="euclidean" (cf. knn()), so the shared-origin recentering
+        # is safe -- L2 neighborhoods are translation-invariant.
+        from ign_lidar.features.compute.coord_utils import recenter_to_local_f32
+
+        points_f32, origin = recenter_to_local_f32(points)
+        query_f32, _ = recenter_to_local_f32(query_points, origin=origin)
+
         nn = NearestNeighbors(n_neighbors=k, algorithm="brute")
-        nn.fit(points)
-        distances, indices = nn.kneighbors(query_points)
+        nn.fit(points_f32)
+        distances, indices = nn.kneighbors(query_f32)
 
         # Convertir en numpy si nécessaire
         if hasattr(distances, "get"):

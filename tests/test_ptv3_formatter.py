@@ -33,7 +33,9 @@ def _synthetic_patch(n: int = 256, seed: int = 0, patch_id: str = "p0001") -> di
     return {
         "points": pts.astype(np.float32),
         "labels": asprs.astype(np.int32),
-        "intensity": rng.integers(0, 65535, size=n).astype(np.float32),
+        # Pre-normalized to [0, 1], matching what the tile loader actually
+        # hands the formatter in production (raw uint16 / 65535).
+        "intensity": rng.uniform(1e-4, 1.0, size=n).astype(np.float32),
         "return_number": rng.integers(1, 5, size=n).astype(np.float32),
         "num_returns": rng.integers(1, 5, size=n).astype(np.float32),
         "normals": normals,

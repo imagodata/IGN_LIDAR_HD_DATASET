@@ -42,7 +42,7 @@ def _make_patch(n: int = 64, idx: int = 0, seed: int = 0) -> dict:
     return {
         "points": rng.uniform(0, 100, size=(n, 3)).astype(np.float32),
         "labels": rng.choice([2, 3, 5, 6, 9], size=n).astype(np.int32),
-        "intensity": rng.integers(0, 65535, size=n).astype(np.float32),
+        "intensity": rng.uniform(1e-4, 1.0, size=n).astype(np.float32),  # pre-normalized [0,1], matches TileLoader
         "return_number": np.ones(n, dtype=np.float32),
         "normals": np.tile(np.array([0, 0, 1], dtype=np.float32), (n, 1)),
         "_patch_idx": idx,

@@ -199,6 +199,39 @@ def test_recenter_is_idempotent():
     np.testing.assert_allclose(once, twice + origin2.astype(np.float32), atol=1e-5)
 
 
+def test_recenter_isolates_nan_instead_of_amplifying_it():
+    """One non-finite input point must not poison the whole cloud.
+
+    A mean-based origin would turn a single NaN point into a NaN *origin*,
+    corrupting every output row instead of just the offending one.
+    """
+    points = _synthetic_cloud(n_points=200) + LAMBERT93_OFFSET
+    points[7, 1] = np.nan
+
+    local, origin = recenter_to_local_f32(points)
+
+    assert np.isfinite(origin).all()
+    assert not np.isfinite(local[7]).all()
+    finite_rows = np.ones(len(points), dtype=bool)
+    finite_rows[7] = False
+    assert np.isfinite(local[finite_rows]).all()
+
+
+def test_recenter_empty_input_does_not_warn_or_produce_nan_origin(recwarn):
+    """An empty point array must not trigger a 'mean of empty slice' warning
+    nor leave a NaN origin (which would poison a later query recentred
+    against it via `origin=`)."""
+    empty = np.empty((0, 3), dtype=np.float64)
+
+    local, origin = recenter_to_local_f32(empty)
+
+    assert local.shape == (0, 3)
+    assert np.isfinite(origin).all()
+    assert not any(
+        issubclass(w.category, RuntimeWarning) for w in recwarn.list
+    )
+
+
 # ============================================================================
 # 3. DTM offset characterization (no network, stubbed fetcher)
 # ============================================================================

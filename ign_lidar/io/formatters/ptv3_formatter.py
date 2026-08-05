@@ -59,8 +59,11 @@ SUPPORTED_FEAT_KEYS: Dict[str, int] = {
     "nir": 1,
     "rgb": 3,
     "height_above_ground": 1,
-    # Geometric descriptors (LOD2/LOD3 building discrimination). Already bounded
-    # ~[0,1] by the feature engine, so _scale_feat passes them through.
+    # Geometric descriptors (LOD2/LOD3 building discrimination). Already
+    # bounded by the feature engine, so _scale_feat clips rather than
+    # rescales them. Note curvature = lambda3/(lambda1+lambda2+lambda3) is
+    # bounded to [0, 1/3] by construction, not [0, 1] like the others — real
+    # values only use the bottom third of the column's nominal range.
     "curvature": 1,
     "horizontality": 1,
     "planarity": 1,
@@ -250,7 +253,9 @@ class Ptv3Formatter(BaseFormatter):
             inverse = {}
 
         meta = {
-            "schema_version": "1.1",
+            # 1.2: added "intensity_scaling" (4.1.15). Consumers keyed on an
+            # older schema_version should not assume this field is present.
+            "schema_version": "1.2",
             "formatter": "Ptv3Formatter",
             "label_schema": self.label_schema,
             "label_names": label_names,
@@ -408,12 +413,29 @@ class Ptv3Formatter(BaseFormatter):
         # Per-feature scaling kept simple and deterministic. PTv3 prefers
         # bounded, ~unit-scale inputs but is robust to small deviations.
         if key == "intensity":
-            # Common Lidar HD range is uint16 [0, ~65535]; normalize to [0, 1].
+            # FeatureOrchestrator's tile loader already normalizes intensity
+            # to [0, 1] (raw uint16 / 65535) before it reaches the patch dict
+            # (core/classification/io/tiles.py) -- same class of bug as
+            # rgb/nir below: dividing by 65535 again here crushed the column
+            # to ~[0, 1.5e-5] (linear) or ~[0, 0.0625] (log, since log1p of an
+            # already-[0,1] input is nearly linear and defeats the point of
+            # "log" mode). "log" recovers the approximate raw uint16 scale
+            # (arr * 65535) before compressing the long tail; "linear" is a
+            # straight pass-through, clipped defensively.
             if self.intensity_scaling == "log":
-                return np.log1p(np.clip(arr, 0.0, 65535.0)) / np.log1p(65535.0)
-            return np.clip(arr / 65535.0, 0.0, 1.0)
+                return np.clip(
+                    np.log1p(arr * 65535.0) / np.log1p(65535.0), 0.0, 1.0
+                )
+            return np.clip(arr, 0.0, 1.0)
         if key in ("return_number", "num_returns"):
-            return np.clip(arr / 7.0, 0.0, 1.0)  # spec caps at 7 returns
+            # LAS point formats 0-5 pack return_number/number_of_returns in a
+            # 3-bit field (max 7); point formats 6-10 (LAS 1.4, what IGN Lidar
+            # HD actually ships -- verified point_format=6 on a real tile) use
+            # a 4-bit field (max 15). /7.0 silently saturated every point with
+            # 7-15 returns to 1.0 and, more importantly, rescaled the common
+            # case (points with a handful of returns) against the wrong
+            # denominator for this data.
+            return np.clip(arr / 15.0, 0.0, 1.0)
         if key in ("rgb", "nir"):
             # FeatureOrchestrator._add_rgb_features()/_add_nir_features() already
             # normalize fetched BD ORTHO/IRC values to float32 [0, 1] via

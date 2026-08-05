@@ -55,9 +55,22 @@ def recenter_to_local_f32(
     Safe to apply defensively: recentering an already-local cloud is harmless
     (the origin is then close to zero), so callers do not need to know whether
     their input is absolute Lambert-93 or already local.
+
+    A mean-based origin amplifies a single non-finite input point into a
+    non-finite *origin*, which would otherwise poison every output row (not
+    just the offending one). LAS/LAZ coordinates cannot be NaN/Inf (they are
+    stored as scaled integers), but this function is also used defensively on
+    data that did not come straight from a LAS file, so the origin is computed
+    with ``nanmean`` and falls back to zero for an all-non-finite or empty
+    input rather than propagating NaN into the whole cloud.
     """
     if origin is None:
-        origin = points.mean(axis=0, dtype=np.float64)
+        if points.shape[0] == 0:
+            origin = np.zeros(points.shape[1], dtype=np.float64)
+        else:
+            with np.errstate(invalid="ignore"):
+                origin = np.nanmean(points, axis=0, dtype=np.float64)
+            origin = np.where(np.isfinite(origin), origin, 0.0)
     else:
         origin = np.asarray(origin, dtype=np.float64)
 

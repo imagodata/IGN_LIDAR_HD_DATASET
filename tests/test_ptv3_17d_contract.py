@@ -120,7 +120,9 @@ def _synthetic_patch(n: int = 256, seed: int = 0) -> dict:
             rng.uniform(120.0, 160.0, n),
         ]),
         "labels": rng.choice([2, 3, 5, 6, 9, 17], size=n).astype(np.int32),
-        "intensity": rng.integers(0, 65535, n).astype(np.float32),
+        # Pre-normalized to [0, 1], matching what TileLoader actually hands
+        # the formatter in production (raw uint16 / 65535) -- NOT raw uint16.
+        "intensity": rng.uniform(1e-4, 1.0, n).astype(np.float32),
         "return_number": rng.integers(1, 6, n).astype(np.float32),
         "num_returns": rng.integers(1, 6, n).astype(np.float32),
         "normals": normals.astype(np.float32),
@@ -320,35 +322,49 @@ def test_intensity_scaling_defaults_to_linear():
     assert Ptv3Formatter().intensity_scaling == "linear"
 
 
-def test_intensity_linear_is_unchanged():
-    """Non-regression: the 9D/12D datasets were built with arr / 65535."""
+def test_intensity_linear_passes_through_the_already_normalized_input():
+    """The patch dict's `intensity` arrives pre-normalized to [0, 1]
+    (TileLoader: raw uint16 / 65535, core/classification/io/tiles.py) --
+    "linear" must be a straight pass-through (clipped defensively), not a
+    second division. A second `/ 65535` here was the pre-4.1.16 bug: it
+    crushed the column to ~[0, 1.5e-5] for every dataset ever produced with
+    intensity_scaling="linear" (9D/12D presets included).
+    """
     fmt = Ptv3Formatter(feat_keys=("intensity",))
-    raw = np.array([[0.0], [1.0], [1000.0], [65535.0]], dtype=np.float32)
+    normalized = np.array([[0.0], [1.0 / 65535.0], [1000.0 / 65535.0], [1.0]],
+                           dtype=np.float32)
     patch = {
         "points": np.zeros((4, 3)),
         "labels": np.full(4, 6, dtype=np.int32),
-        "intensity": raw.ravel(),
+        "intensity": normalized.ravel(),
     }
     np.testing.assert_allclose(
         fmt.format_patch(patch)["feat"].ravel(),
-        (raw / 65535.0).ravel(),
+        normalized.ravel(),
         rtol=0,
-        atol=0,
+        atol=1e-7,
     )
 
 
-def test_intensity_log_uses_log1p():
+def test_intensity_log_recovers_the_raw_scale_before_log1p():
+    """"log" must recover the approximate raw uint16 magnitude (arr * 65535)
+    before compressing it -- log1p of an already-[0,1] input is nearly linear
+    and would defeat the point of "log" mode (pre-4.1.16 bug, same root cause
+    as the linear case above: same-magnitude divide-by-65535 assumed raw
+    uint16 input that was never actually raw by the time it reached here).
+    """
     fmt = Ptv3Formatter(feat_keys=("intensity",), intensity_scaling="log")
     raw = np.array([0.0, 1.0, 1000.0, 65535.0], dtype=np.float32)
+    normalized = raw / 65535.0
     patch = {
         "points": np.zeros((4, 3)),
         "labels": np.full(4, 6, dtype=np.int32),
-        "intensity": raw,
+        "intensity": normalized,
     }
     np.testing.assert_allclose(
         fmt.format_patch(patch)["feat"].ravel(),
         np.log1p(raw) / np.log1p(65535.0),
-        rtol=1e-6,
+        rtol=1e-5,
     )
 
 
@@ -423,7 +439,7 @@ def test_output_writer_honours_the_preset_intensity_scaling(tmp_path: Path):
     laz_file.touch()
     patch = _synthetic_patch(n=64, seed=11)
     patch.update({"_patch_idx": 0, "_version": "original"})
-    raw_intensity = patch["intensity"].copy()
+    normalized_intensity = patch["intensity"].copy()  # already in [0, 1]
 
     writer.save_patches([patch], laz_file, tmp_path / "out")
     writer.finalize()
@@ -443,7 +459,9 @@ def test_output_writer_honours_the_preset_intensity_scaling(tmp_path: Path):
     feat = np.load(sample / "feat.npy")
     assert feat.shape == (64, CONTRACT_FEAT_DIM)
     np.testing.assert_allclose(
-        feat[:, 0], np.log1p(raw_intensity) / np.log1p(65535.0), rtol=1e-6
+        feat[:, 0],
+        np.log1p(normalized_intensity * 65535.0) / np.log1p(65535.0),
+        rtol=1e-5,
     )
     assert (feat.std(axis=0) > 0).all()
 

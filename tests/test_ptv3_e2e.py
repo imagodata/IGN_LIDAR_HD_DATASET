@@ -94,7 +94,7 @@ def _build_patch(tile_id: str, patch_idx: int, n: int = 256, seed: int = 0) -> d
     return {
         "points": pts,
         "labels": rng.choice([2, 3, 5, 6, 9, 17], size=n).astype(np.int32),
-        "intensity": rng.integers(0, 65535, size=n).astype(np.float32),
+        "intensity": rng.uniform(1e-4, 1.0, size=n).astype(np.float32),  # pre-normalized [0,1], matches TileLoader
         "return_number": rng.integers(1, 5, size=n).astype(np.float32),
         "normals": normals,
         "patch_id": f"{tile_id}_p{patch_idx:04d}",

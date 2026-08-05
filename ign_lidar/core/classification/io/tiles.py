@@ -379,8 +379,14 @@ class TileLoader:
         # Filter all arrays
         tile_data['points'] = points[mask]
         tile_data['intensity'] = tile_data['intensity'][mask]
-        tile_data['return_number'] = tile_data['return_number'][mask]
-        tile_data['num_returns'] = tile_data['num_returns'][mask]
+        # return_number/num_returns are hard-indexed by TileLoader.load_tile()
+        # (always present in that path), but this method has no in-repo caller
+        # today; guard against a hand-built tile_data dict that omits them
+        # rather than KeyError on a key nothing here actually requires.
+        if tile_data.get('return_number') is not None:
+            tile_data['return_number'] = tile_data['return_number'][mask]
+        if tile_data.get('num_returns') is not None:
+            tile_data['num_returns'] = tile_data['num_returns'][mask]
         tile_data['classification'] = tile_data['classification'][mask]
         
         # Filter optional arrays
@@ -453,8 +459,10 @@ class TileLoader:
         # Apply cumulative filter
         tile_data['points'] = points[cumulative_mask]
         tile_data['intensity'] = tile_data['intensity'][cumulative_mask]
-        tile_data['return_number'] = tile_data['return_number'][cumulative_mask]
-        tile_data['num_returns'] = tile_data['num_returns'][cumulative_mask]
+        if tile_data.get('return_number') is not None:
+            tile_data['return_number'] = tile_data['return_number'][cumulative_mask]
+        if tile_data.get('num_returns') is not None:
+            tile_data['num_returns'] = tile_data['num_returns'][cumulative_mask]
         tile_data['classification'] = tile_data['classification'][cumulative_mask]
         
         if tile_data['input_rgb'] is not None:
@@ -477,8 +485,10 @@ class TileLoader:
             
             tile_data['points'] = points_filtered
             tile_data['intensity'] = tile_data['intensity'][voxel_indices]
-            tile_data['return_number'] = tile_data['return_number'][voxel_indices]
-            tile_data['num_returns'] = tile_data['num_returns'][voxel_indices]
+            if tile_data.get('return_number') is not None:
+                tile_data['return_number'] = tile_data['return_number'][voxel_indices]
+            if tile_data.get('num_returns') is not None:
+                tile_data['num_returns'] = tile_data['num_returns'][voxel_indices]
             tile_data['classification'] = tile_data['classification'][voxel_indices]
             
             if tile_data['input_rgb'] is not None:

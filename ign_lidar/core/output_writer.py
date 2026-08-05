@@ -198,8 +198,12 @@ class OutputWriter:
             layout=layout,
             center_xy=bool(ptv3_cfg.get("center_xy", True)),
             anchor_z_min=bool(ptv3_cfg.get("anchor_z_min", True)),
-            # Default "linear" keeps the 9D/12D presets byte-identical.
-            intensity_scaling=str(ptv3_cfg.get("intensity_scaling", "linear")),
+            # Default "linear" keeps the 9D/12D presets byte-identical. `or`
+            # (not just `.get(..., "linear")`) also covers `intensity_scaling:`
+            # left empty / explicit `null` in YAML, which OmegaConf resolves
+            # to a present key with value None -- str(None) would otherwise
+            # produce the literal string "None" and fail formatter validation.
+            intensity_scaling=str(ptv3_cfg.get("intensity_scaling") or "linear"),
         )
         assigner = HashSplitAssigner(
             train=float(split_cfg.get("train", 0.8)),

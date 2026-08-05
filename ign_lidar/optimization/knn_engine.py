@@ -486,18 +486,24 @@ class KNNEngine:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Search using cuML (GPU)."""
         from cuml.neighbors import NearestNeighbors as cuMLNN
-        
+
         logger.debug(f"Using cuML backend for {len(points)} points")
-        
+
+        # Same metric-gated recentering as the FAISS backends (see
+        # _to_float32_for_faiss): cuML casts to float32 internally, and only
+        # euclidean/L2 neighborhoods are translation-invariant.
+        points_r, query_r = self._to_float32_for_faiss(points, query_points)
+
         nn = cuMLNN(n_neighbors=k, algorithm='brute', metric=self.metric)
-        nn.fit(points)
-        distances, indices = nn.kneighbors(query_points)
-        
-        # Convert to numpy if needed (unless return_gpu=True)
-        if not return_gpu and hasattr(distances, 'get'):
+        nn.fit(points_r)
+        distances, indices = nn.kneighbors(query_r)
+
+        # Convert to numpy if needed (cuML returns cupy/cudf arrays/frames).
+        if hasattr(distances, 'get'):
             distances = distances.get()
+        if hasattr(indices, 'get'):
             indices = indices.get()
-        
+
         return distances, indices
     
     def _search_sklearn(

@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.16] - 2026-08-05 - Fix intensity/return-count double-normalization; harden coordinate/feature edge cases
+
+Follow-up to 4.1.15, covering the remaining findings from its code review
+(all confirmed CONFIRMED, none PLAUSIBLE) plus one bug found while fixing
+the return-count cap.
+
+### Fixed 🐛 — behavior changes (dataset reproducibility)
+
+- **`intensity` (feat.npy column 0) was double-normalized.** `TileLoader`
+  already divides by 65535 at load time
+  (`core/classification/io/tiles.py`), so `Ptv3Formatter._scale_feat`
+  dividing (`"linear"`) or `log1p`-ing (`"log"`) again assumed raw uint16
+  input that was never actually raw by the time it reached the formatter.
+  Measured impact (real data, 4.1.15 validation tile): `"linear"` crushed the
+  column to ~[0, 1.5e-5]; `"log"` to ~[0, 0.0625] (6.25% of its nominal
+  range). Fixed: `"linear"` is now a straight pass-through (clipped
+  defensively); `"log"` recovers the approximate raw scale (`arr * 65535`)
+  before compressing it, which is what actually delivers the "preserve the
+  low-intensity tail" behavior the mode was documented to have.
+  **This changes the intensity column's values for every preset**, including
+  the 9D/12D presets already used to produce shipped datasets/checkpoints —
+  accepted as a correctness fix rather than preserved as a compatibility
+  quirk (explicit user decision; the alternative was leaving intensity
+  effectively constant-zero in every dataset produced by this package).
+- **`return_number`/`num_returns` were capped at `/7.0`**, correct for LAS
+  point formats 0-5 (3-bit field, max 7) but not point format 6+ (LAS 1.4,
+  4-bit field, max 15) — verified IGN Lidar HD tiles ship as point format 6
+  (`laspy` header check on a real tile). Changed to `/15.0`. Also rescales
+  every point's value, not just the rare >7-return tail.
+
+### Fixed 🐛 — correctness, no behavior change on real data
+
+- `ign_lidar/optimization/knn_engine.py::_search_cuml`: was missing the same
+  metric-gated recentering as the FAISS backends (absolute Lambert-93
+  coordinates cast to float32 internally by cuML); now shares
+  `_to_float32_for_faiss`. Also fixed an unrelated pre-existing `NameError`
+  in the same method (`return_gpu` referenced but never defined/parametrized
+  — would have crashed on first real cuML usage).
+- `ign_lidar/optimization/gpu_accelerated_ops.py::_knn_cuml`: same missing
+  recentering, fixed the same way.
+- `ign_lidar/core/tile_processor.py::_compute_features`: called
+  `FeatureOrchestrator.compute_all_features(points=..., classification=...)`,
+  a method that does not exist (only `FeatureComputer` has it) with a calling
+  convention `compute_features` doesn't use either (single `tile_data` dict,
+  not kwargs) — this call has been raising `AttributeError` unconditionally
+  since introduced. Fixed to call `compute_features(tile_data=original_data)`.
+  Confirmed dead/unreachable code (`TileProcessor` is only reachable from
+  `processor.process_tile_v2`, which nothing calls) — no behavior change on
+  any live path, just removes a landmine that read as coverage.
+- `ign_lidar/features/compute/coord_utils.recenter_to_local_f32`: origin was
+  a plain `mean()`, so one non-finite input point produced a non-finite
+  *origin* and poisoned every output row, not just the offending one; and an
+  empty input raised a `RuntimeWarning: Mean of empty slice`. Now uses
+  `nanmean` with a zero fallback for all-non-finite/empty input, isolating a
+  bad point to its own row.
+- `ign_lidar/core/classification/patch_extractor.py::extract_patches`: a
+  `None`-valued feature (e.g. `num_returns` when the upstream `tile_data`
+  didn't supply it) relied on `validate_features()` having already dropped it
+  from the dict; a caller skipping validation would hit
+  `TypeError: 'NoneType' object is not subscriptable`. Now skipped explicitly
+  at the point of use.
+- `ign_lidar/core/classification/io/tiles.py::apply_bbox_filter`/
+  `apply_preprocessing`: `return_number`/`num_returns` were hard-indexed
+  (`tile_data['num_returns'][mask]`), unlike the `.get()`-safe pattern used
+  elsewhere for the same key; a hand-built `tile_data` dict without them now
+  degrades gracefully instead of `KeyError` (no in-repo caller today).
+- `ign_lidar/core/classification/patch_extractor.py::augment_raw_points`:
+  didn't filter `num_returns` under dropout augmentation (only
+  `return_number`/`rgb`/`nir`/`ndvi` were). Added as an optional parameter,
+  filtered the same way, appended to the return tuple. **Return-tuple arity
+  changes** (7→8, or 8→9 with `return_mask=True`) — no in-repo caller exists.
+
+### Added ✨
+
+- 2 new regression tests for the `coord_utils` NaN-isolation/empty-input fix.
+- `tests/test_intensity_linear_passes_through_the_already_normalized_input`,
+  `tests/test_intensity_log_recovers_the_raw_scale_before_log1p` replace the
+  two tests that asserted the old double-normalized behavior as
+  "non-regression" — they were exercising `_scale_feat` with hand-built raw
+  uint16-shaped intensity, which is not what the formatter actually receives
+  in production; synthetic patch fixtures across the PTv3 test files now
+  generate pre-normalized `[0, 1]` intensity to match.
+
+### Notes 📝
+
+Full suite: 1080 passed (2 more than 4.1.15's 1078), same 3 pre-existing
+failures / 6 errors (GPU batch-transfer, `test_roof_classifier`, one
+collection `NameError`) reproduced identically before and after.
+
+---
+
 ## [4.1.15] - 2026-08-05 - Fix float32 quantization of Lambert-93 coordinates; native PTv3 17D contract
 
 ### Fixed 🐛

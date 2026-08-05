@@ -71,7 +71,12 @@ features:
   compute_normals: true       # normals (3)
   compute_curvature: true     # curvature (1) — arêtes de toit vs surfaces
   compute_height: true        # height_above_ground (1)
-  compute_geometric: true     # requis pour horizontality (1)
+  # compute_geometric: not read as a config key anywhere in the codebase —
+  # kept only for readability/future-proofing, has no effect either way.
+  # horizontality (1) is computed unconditionally from normals whenever
+  # compute_normals=true (strategy_cpu.py/strategy_gpu*.py), not gated by
+  # this flag.
+  compute_geometric: true
   compute_architectural: false
   use_rgb: true               # +3 dims from BD ORTHO 20 cm
   use_infrared: true          # +1 dim from BD ORTHO IRC
