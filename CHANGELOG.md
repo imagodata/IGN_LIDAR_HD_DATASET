@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.17] - 2026-08-05 - Fix the GPU feature strategies (unconditional AttributeError/TypeError, never executed before)
+
+`GPUStrategy`/`GPUChunkedStrategy` (`features/strategy_gpu.py`,
+`features/strategy_gpu_chunked.py`) — the classes `FeatureOrchestrator`'s
+strategy pattern dispatches to for GPU feature computation — could not
+complete a single call to `compute()`. Found while structurally verifying
+the coordinate-precision fixes applied to these files in 4.1.15/4.1.16 (no
+CUDA hardware was available to run them for real, so this had never
+actually been exercised end-to-end).
+
+### Fixed 🐛
+
+- `self.gpu_manager` was referenced in both strategies but never set as an
+  instance attribute (only a module-level `_gpu_manager` exists, which has
+  no `gpu_pool` attribute either) — unconditional `AttributeError` on every
+  `compute()` call. Was feeding a GPU-memory-pooling wrapper
+  (`pooled_features`/`GPUPoolingContext`, `optimization/gpu_pooling_helper.py`)
+  that turned out to be dead weight regardless: its buffers were never
+  actually read back into the computed feature dict (every feature was
+  built directly into `gpu_results`, not via the pool), and its own
+  `gpu_pool.get_array(..., name=...)` call doesn't match the signature of
+  any of the three unrelated `GPUMemoryPool`-ish classes in this codebase
+  (`purpose=`, not `name=`) — it would have raised `TypeError` immediately
+  even with a correctly-wired pool. `GPUChunkedStrategy` additionally called
+  `pool_ctx.record_reuse()`, a method that only exists on the unrelated
+  `PoolingStatistics` class, not on `GPUPoolingContext`. Removed the pooling
+  wrapper entirely (decorative, not functional) rather than patch three
+  more interface mismatches in code nothing actually used.
+- `GPUStrategy.compute()` called `GPUProcessor.compute_normals(...)`, which
+  does not exist and never did (confirmed: not present at any point in this
+  file's history via `git log -p`). Replaced with `GPUProcessor.
+  compute_features(points, feature_types=["normals", "curvature"], ...)`,
+  the actual public entry point (its own docstring: "the main entry point
+  for feature computation") — also removes a redundant second k-NN pass
+  that `compute_curvature()` would otherwise have needed.
+  `GPUChunkedStrategy` already called `compute_features()` correctly; only
+  `GPUStrategy` had this second bug.
+- Same `compute_normals()` bug, third call site:
+  `MultiScaleFeatureComputer._compute_single_scale_gpu()`
+  (`features/compute/multi_scale.py`) — fixed the same way.
+
+### Added ✨
+
+- `tests/test_gpu_strategy_wiring.py`: since no CUDA/CuPy is available to
+  actually run these strategies, verifies structural correctness (no
+  AttributeError/TypeError from `GPUStrategy`/`GPUChunkedStrategy`/
+  `MultiScaleFeatureComputer`'s own code) via a fake `GPUProcessor` --
+  `BatchTransferContext`, `GPUMemoryPoolIntegration`, and the stream
+  optimizer all do their own independent hardware detection and gracefully
+  CPU-fall-back regardless of what's patched in the strategy modules'
+  namespace, so this exercises the real code path around the fake. These 3
+  tests fail on the pre-4.1.17 code (reverting the fix reproduces both the
+  AttributeError and the TypeError immediately).
+
+### Known limitations 📝
+
+- Still **not verified on real GPU hardware** — this release makes the code
+  *reach* `GPUProcessor.compute_features()`/`compute_curvature()` without
+  crashing beforehand; correctness of `GPUProcessor`'s own CUDA/cuML/FAISS
+  kernels was not (and could not be, without hardware) re-audited here.
+- `optimization/gpu_pooling_helper.py` (`pooled_features`, `GPUPoolingContext`)
+  is now unused dead code (no remaining callers in the package) — left in
+  place rather than deleted, since removing a public-ish module is a
+  larger decision than fixing the two call sites that broke on it.
+
+---
+
 ## [4.1.16] - 2026-08-05 - Fix intensity/return-count double-normalization; harden coordinate/feature edge cases
 
 Follow-up to 4.1.15, covering the remaining findings from its code review

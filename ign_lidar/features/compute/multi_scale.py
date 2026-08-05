@@ -602,13 +602,16 @@ class MultiScaleFeatureComputer:
         """
         logger.debug(f"Computing scale on GPU: k={k_neighbors}")
         
-        # Compute normals and curvature using GPU
-        normals = self.gpu_processor.compute_normals(
-            points, k=k_neighbors, show_progress=False
+        # Compute normals and curvature using GPU. `GPUProcessor.compute_normals()`
+        # does not exist (never did -- same bug as in strategy_gpu.py, fixed
+        # there in the same pass); `compute_features()` is the actual public
+        # entry point and computes both in one k-NN pass.
+        geo_features = self.gpu_processor.compute_features(
+            points, feature_types=["normals", "curvature"],
+            k=k_neighbors, show_progress=False,
         )
-        curvature = self.gpu_processor.compute_curvature(
-            points, normals, k=k_neighbors, show_progress=False
-        )
+        normals = geo_features["normals"]
+        curvature = geo_features["curvature"]
         
         result = {}
         
